@@ -1,9 +1,11 @@
 import os
+import re
 from datetime import timedelta, datetime
 from email_validator import validate_email, EmailNotValidError
 from functools import wraps
+from werkzeug.utils import secure_filename
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_file
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_cors import CORS
@@ -29,6 +31,17 @@ CORS(app,
 
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///site.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+# Configuración de archivos
+UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', 'data/identificaciones')
+MAX_FILE_SIZE = int(os.getenv('MAX_FILE_SIZE', 5242880))  # 5MB por defecto
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
+
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
+
+# Crear directorio de uploads si no existe
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 # Expiraciones
 access_minutes = int(os.getenv('ACCESS_TOKEN_EXPIRES', 15))
@@ -64,6 +77,59 @@ def _require_json(keys):
         return None, (jsonify({"error": f"Campos faltantes: {', '.join(missing)}"}), 400)
     return data, None
 
+def allowed_file(filename):
+    return '.' in filename and \
+           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def validate_phone(phone):
+    # Valida formato de teléfono (10-15 dígitos, puede tener +)
+    pattern = r'^\+?[0-9]{10,15}$'
+    return re.match(pattern, phone) is not None
+
+def validate_user_data(form_data):
+    errors = []
+    
+    # Validar campos requeridos
+    required_fields = ['email', 'password', 'nombre_completo', 'apellidos', 
+                      'direccion', 'edad', 'telefono', 'role']
+    
+    for field in required_fields:
+        if field not in form_data or form_data[field] in [None, '', ' ']:
+            errors.append(f"Campo requerido: {field}")
+    
+    if errors:
+        return errors
+    
+    # Validar email
+    try:
+        _normalize_email(form_data['email'])
+    except ValueError as e:
+        errors.append(f"Email inválido: {e}")
+    
+    # Validar contraseña
+    if len(form_data['password']) < 6:
+        errors.append("La contraseña debe tener al menos 6 caracteres.")
+    
+    # Validar edad
+    try:
+        edad = int(form_data['edad'])
+        if edad < 18 or edad > 120:
+            errors.append("Debe ser mayor de edad (18 años o más).")
+    except (ValueError, TypeError):
+        errors.append("Edad debe ser un número válido.")
+    
+    # Validar teléfono
+    if not validate_phone(form_data['telefono']):
+        errors.append("Formato de teléfono inválido (debe tener 10-15 dígitos).")
+    
+    # Validar rol
+    valid_roles = ['voluntarios', 'personal', 'servicio_social', 'visitas', 
+                   'familiares', 'donantes', 'proveedores']
+    if form_data['role'] not in valid_roles:
+        errors.append(f"Rol inválido. Roles válidos: {', '.join(valid_roles)}")
+    
+    return errors
+
 def role_required(*roles):
     # Decorador para forzar rol en el JWT
     def wrapper(fn):
@@ -72,11 +138,19 @@ def role_required(*roles):
             verify_jwt_in_request()
             claims = get_jwt() or {}
             role = claims.get('role')
+            is_authorized = claims.get('is_authorized', False)
+            
+            # Verificar que el usuario esté autorizado (excepto admins)
+            if role != 'admin' and not is_authorized:
+                return jsonify({
+                    "error": "Tu cuenta no está autorizada."
+                }), 403
+            
             if role not in roles:
                 return jsonify({
                     "error": "Forbidden",
                     "detail": "Rol insuficiente para acceder a este recurso.",
-                    "required_roles": roles,
+                    "required_roles": list(roles),
                     "current_role": role
                 }), 403
             return fn(*args, **kwargs)
@@ -84,45 +158,98 @@ def role_required(*roles):
     return wrapper
 
 # --------------------------
+# Endpoints públicos
+# --------------------------
+@app.get('/health')
+def health():
+    return jsonify({
+        "status": "ok",
+        "time": datetime.now().isoformat()
+    }), 200
+
+# --------------------------
 # Rutas de autenticación
 # --------------------------
 @app.post('/auth/register')
 def register():
-    data, error_response = _require_json(['username', 'email', 'password'])
-    if error_response:
-        return error_response
-
+    # Validar que sea multipart/form-data
+    if 'foto_identificacion' not in request.files:
+        return jsonify({"error": "Se requiere fotografía de identificación."}), 400
+    
+    file = request.files['foto_identificacion']
+    if file.filename == '':
+        return jsonify({"error": "No se seleccionó ningún archivo."}), 400
+    
+    if not allowed_file(file.filename):
+        return jsonify({"error": "Formato de archivo no válido. Solo se permiten PNG, JPG, JPEG."}), 400
+    
+    # Validar datos del formulario
+    form_data = request.form.to_dict()
+    validation_errors = validate_user_data(form_data)
+    
+    if validation_errors:
+        return jsonify({"error": ", ".join(validation_errors)}), 400
+    
+    # Normalizar email
     try:
-        email = _normalize_email(data['email'])
+        email = _normalize_email(form_data['email'])
     except ValueError as e:
         return jsonify({"error": f"Email inválido: {str(e)}"}), 400
-
-    password = data['password']
-    if len(password) < 6:
-        return jsonify({"error": "La contraseña debe tener al menos 6 caracteres."}), 400
-
+    
+    # Verificar si el email ya existe
     if User.query.filter_by(email=email).first():
-        return jsonify({"error": "El email ya está registrado."}), 400
-
-    # Rol opcional en el registro; por defecto 'user' y validado
-    role = data.get('role', 'user')
-    if role not in ('admin', 'user'):
-        role = 'user'
-
-    user = User(username=data['username'], email=email, role=role)
-    user.set_password(password)
-    db.session.add(user)
-    db.session.commit()
-
-    claims = {"email": user.email, "role": user.role}
-    access_token = create_access_token(identity=str(user.id), additional_claims=claims)
-    refresh_token = create_refresh_token(identity=str(user.id))
-    return jsonify({
-        "message": "Usuario registrado exitosamente.",
-        "user": user.to_dict(),
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-    }), 201
+        return jsonify({"error": "El email ya está registrado."}), 409
+    
+    # Guardar archivo de identificación
+    filename = secure_filename(file.filename)
+    file_extension = filename.rsplit('.', 1)[1].lower()
+    
+    # Crear nombre único para el archivo
+    unique_filename = f"temp_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{filename}"
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
+    
+    try:
+        file.save(file_path)
+    except Exception as e:
+        return jsonify({"error": "Error al guardar el archivo de identificación."}), 500
+    
+    # Crear usuario
+    try:
+        user = User(
+            email=email,
+            nombre_completo=form_data['nombre_completo'].strip(),
+            apellidos=form_data['apellidos'].strip(),
+            direccion=form_data['direccion'].strip(),
+            edad=int(form_data['edad']),
+            telefono=form_data['telefono'].strip(),
+            role=form_data['role'],
+            is_authorized=False,  # Requiere autorización de admin
+            foto_identificacion_path=file_path
+        )
+        user.set_password(form_data['password'])
+        
+        db.session.add(user)
+        db.session.commit()
+        
+        # Renombrar archivo con ID del usuario
+        new_filename = f"user_{user.id}_id.{file_extension}"
+        new_file_path = os.path.join(app.config['UPLOAD_FOLDER'], new_filename)
+        
+        os.rename(file_path, new_file_path)
+        user.foto_identificacion_path = new_file_path
+        db.session.commit()
+        
+        return jsonify({
+            "message": "Usuario registrado exitosamente. Pendiente de autorización por un administrador.",
+            "user": user.to_dict()
+        }), 201
+        
+    except Exception as e:
+        # Limpiar archivo si hay error
+        if os.path.exists(file_path):
+            os.remove(file_path)
+        db.session.rollback()
+        return jsonify({"error": "Error interno del servidor."}), 500
 
 @app.post("/auth/login")
 def login():
@@ -139,8 +266,14 @@ def login():
     if not user or not user.check_password(data["password"]):
         # No revelar si el email existe
         return jsonify({"error": "Credenciales inválidas."}), 401
+    
+    # Verificar si el usuario está autorizado (excepto para admins)
+    if user.role != 'admin' and not user.is_authorized:
+        return jsonify({
+            "error": "Tu cuenta está pendiente de autorización. Por favor espera a que un administrador apruebe tu registro."
+        }), 403
 
-    claims = {"email": user.email, "role": user.role}
+    claims = {"email": user.email, "role": user.role, "is_authorized": user.is_authorized}
     access_token = create_access_token(identity=str(user.id), additional_claims=claims)
     refresh_token = create_refresh_token(identity=str(user.id))
     return jsonify({
@@ -157,7 +290,14 @@ def refresh():
     user = User.query.get(int(uid)) if uid is not None else None
     if not user:
         return jsonify({"error": "Usuario no encontrado."}), 404
-    claims = {"email": user.email, "role": user.role}
+    
+    # Verificar que el usuario siga autorizado (excepto admins)
+    if user.role != 'admin' and not user.is_authorized:
+        return jsonify({
+            "error": "Tu cuenta ya no está autorizada."
+        }), 401
+    
+    claims = {"email": user.email, "role": user.role, "is_authorized": user.is_authorized}
     access_token = create_access_token(identity=str(uid), additional_claims=claims)
     return jsonify({"access_token": access_token}), 200
 
@@ -173,18 +313,123 @@ def profile():
         return jsonify({"error": "Usuario no encontrado."}), 404
     return jsonify({"user": user.to_dict()}), 200
 
+# --------------------------
+# Endpoints administrativos
+# --------------------------
+@app.get('/admin/users/pending')
+@role_required('admin')
+def get_pending_users():
+    page = request.args.get('page', 1, type=int)
+    per_page = min(request.args.get('per_page', 20, type=int), 100)  # Max 100
+    role_filter = request.args.get('role', None)
+    
+    query = User.query.filter_by(is_authorized=False)
+    
+    if role_filter and role_filter in ['voluntarios', 'personal', 'servicio_social', 
+                                       'visitas', 'familiares', 'donantes', 'proveedores']:
+        query = query.filter_by(role=role_filter)
+    
+    paginated = query.paginate(
+        page=page, 
+        per_page=per_page, 
+        error_out=False
+    )
+    
+    users = [user.to_dict() for user in paginated.items]
+    
+    return jsonify({
+        "users": users,
+        "total": paginated.total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": paginated.pages
+    }), 200
+
+@app.post('/admin/users/<int:user_id>/authorize')
+@role_required('admin')
+def authorize_user(user_id):
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "Usuario no encontrado."}), 404
+    
+    if user.is_authorized:
+        return jsonify({"error": "El usuario ya está autorizado."}), 400
+    
+    # Obtener ID del admin que autoriza
+    admin_id = int(get_jwt_identity())
+    
+    # Autorizar usuario
+    user.is_authorized = True
+    user.authorized_at = datetime.now()
+    user.authorized_by_id = admin_id
+    
+    db.session.commit()
+    
+    return jsonify({
+        "message": "Usuario autorizado exitosamente.",
+        "user": user.to_dict()
+    }), 200
+
+@app.post('/admin/users/<int:user_id>/reject')
+@role_required('admin')
+def reject_user(user_id):
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "Usuario no encontrado."}), 404
+    
+    if user.is_authorized:
+        return jsonify({"error": "No se puede rechazar un usuario ya autorizado."}), 400
+    
+    # Eliminar archivo de identificación si existe
+    if user.foto_identificacion_path and os.path.exists(user.foto_identificacion_path):
+        try:
+            os.remove(user.foto_identificacion_path)
+        except Exception:
+            pass  # No fallar si no se puede eliminar el archivo
+    
+    # Eliminar usuario
+    db.session.delete(user)
+    db.session.commit()
+    
+    return jsonify({
+        "message": "Usuario rechazado y eliminado exitosamente."
+    }), 200
+
+@app.get('/admin/users/<int:user_id>/identification')
+@role_required('admin')
+def get_user_identification(user_id):
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"error": "Usuario no encontrado."}), 404
+    
+    if not user.foto_identificacion_path or not os.path.exists(user.foto_identificacion_path):
+        return jsonify({"error": "Fotografía de identificación no encontrada."}), 404
+    
+    try:
+        return send_file(user.foto_identificacion_path)
+    except Exception as e:
+        return jsonify({"error": "Error al acceder al archivo de identificación."}), 500
+
 @app.get("/admin/stats")
 @role_required('admin')  # Solo ADMIN
 def admin_stats():
     total_users = User.query.count()
-    total_admins = User.query.filter_by(role='admin').count()
-    total_regular = User.query.filter_by(role='user').count()
+    total_authorized = User.query.filter_by(is_authorized=True).count()
+    total_pending = User.query.filter_by(is_authorized=False).count()
+    
+    # Contar por roles
+    roles_count = {}
+    all_roles = ['admin', 'voluntarios', 'personal', 'servicio_social', 
+                 'visitas', 'familiares', 'donantes', 'proveedores']
+    
+    for role in all_roles:
+        roles_count[role] = User.query.filter_by(role=role).count()
+    
     return jsonify({
         "users_total": total_users,
-        "users_by_role": {
-            "admin": total_admins,
-            "user": total_regular
-        }
+        "users_authorized": total_authorized,
+        "users_pending": total_pending,
+        "users_by_role": roles_count
     }), 200
 
 
