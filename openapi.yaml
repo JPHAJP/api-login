@@ -20,10 +20,10 @@ info:
     ```
     Authorization: Bearer <access_token>
     ```
-  version: 1.0.0
+  version: 1.0.1
   contact:
-    name: Rafael Pérez Aguirre
-    email: admin@tuempresa.com
+    name: José Pablo Hernández Alonso
+    email: josepabloservicio@outlook.com
   license:
     name: MIT License
     url: https://opensource.org/licenses/MIT
