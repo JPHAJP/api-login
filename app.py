@@ -1,9 +1,11 @@
 import os
 import re
+import ipaddress
 from datetime import timedelta, datetime
 from email_validator import validate_email, EmailNotValidError
 from functools import wraps
 from werkzeug.utils import secure_filename
+from urllib.parse import urlparse
 
 from flask import Flask, jsonify, request, send_file
 from flask_sqlalchemy import SQLAlchemy
@@ -22,12 +24,80 @@ jwt = JWTManager()
 app = Flask(__name__)
 
 # Configuración CORS
+allowed_origins = [
+    # Desarrollo local
+    'http://localhost:3000', 
+    'http://localhost:5173', 
+    'http://127.0.0.1:3000', 
+    'http://127.0.0.1:5173',
+    # Frontend en Vercel
+    'https://login-proyect-umber.vercel.app',
+    # IPs específicas solicitadas
+    'http://44.226.145.213', 
+    'https://44.226.145.213',
+    'http://54.187.200.255', 
+    'https://54.187.200.255',
+    'http://34.213.214.55', 
+    'https://34.213.214.55',
+    'http://35.164.95.156', 
+    'https://35.164.95.156',
+    'http://44.230.95.183', 
+    'https://44.230.95.183',
+    'http://44.229.200.200', 
+    'https://44.229.200.200'
+]
+
 CORS(app, 
-     origins=['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173'],
-     allow_headers=['Content-Type', 'Authorization'],
+     origins=allowed_origins,
+     allow_headers=['Content-Type', 'Authorization', 'X-Requested-With'],
      methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
      supports_credentials=True
 )
+
+# Redes CIDR adicionales permitidas
+allowed_cidrs = [
+    '74.220.48.0/24',
+    '74.220.56.0/24'
+]
+
+def is_origin_allowed(origin):
+    """Verifica si un origin está permitido por IP exacta o CIDR"""
+    if not origin:
+        return False
+    
+    try:
+        parsed = urlparse(origin)
+        host = parsed.hostname
+        if not host:
+            return False
+        
+        # Verificar si es una IP y está en las redes CIDR
+        try:
+            ip = ipaddress.ip_address(host)
+            for cidr in allowed_cidrs:
+                if ip in ipaddress.ip_network(cidr):
+                    return True
+        except ValueError:
+            # No es una IP válida
+            pass
+            
+    except Exception:
+        pass
+    
+    return False
+
+@app.after_request
+def after_request(response):
+    """Manejo adicional de CORS para redes CIDR"""
+    origin = request.headers.get('Origin')
+    
+    if origin and (origin in allowed_origins or is_origin_allowed(origin)):
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    
+    return response
 
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///site.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
