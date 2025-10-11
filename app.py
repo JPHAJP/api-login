@@ -1,5 +1,7 @@
 import os
 import re
+import ipaddress
+from urllib.parse import urlparse
 from datetime import timedelta, datetime
 from email_validator import validate_email, EmailNotValidError
 from functools import wraps
@@ -22,12 +24,78 @@ jwt = JWTManager()
 app = Flask(__name__)
 
 # Configuración CORS
-CORS(app, 
-     origins=['http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173'],
+# Lista de orígenes permitidos (IP explícitas con esquema)
+_EXPLICIT_ORIGINS = [
+    'http://localhost:3000', 'http://localhost:5173', 'http://127.0.0.1:3000', 'http://127.0.0.1:5173',
+    'http://44.226.145.213', 'https://44.226.145.213',
+    'http://54.187.200.255', 'https://54.187.200.255',
+    'http://34.213.214.55', 'https://34.213.214.55',
+    'http://35.164.95.156', 'https://35.164.95.156',
+    'http://44.230.95.183', 'https://44.230.95.183',
+    'http://44.229.200.200', 'https://44.229.200.200'
+]
+
+# Redes CIDR que aceptamos (se comprobará contra la IP del origen)
+_ALLOWED_CIDRS = [
+    '74.220.48.0/24',
+    '74.220.56.0/24'
+]
+
+CORS(app,
+     origins=_EXPLICIT_ORIGINS,
      allow_headers=['Content-Type', 'Authorization'],
      methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
      supports_credentials=True
 )
+
+
+def _origin_allowed(origin: str) -> bool:
+    """Verifica si el origin (URL) está permitido por IP explícita o por CIDR.
+
+    - Extrae el host del origin
+    - Si el host es una IP exacta permitida devuelve True
+    - Si la IP cae dentro de un CIDR permitido devuelve True
+    """
+    if not origin:
+        return False
+    try:
+        parsed = urlparse(origin)
+        host = parsed.hostname
+        if not host:
+            return False
+
+        # Comprueba coincidencia explícita (sin esquema)
+        if origin in _EXPLICIT_ORIGINS:
+            return True
+
+        # Intentar interpretar host como IP y comprobar CIDRs
+        try:
+            ip = ipaddress.ip_address(host)
+            for cidr in _ALLOWED_CIDRS:
+                if ip in ipaddress.ip_network(cidr):
+                    return True
+        except ValueError:
+            # host no es una IP; no soportado en CIDR
+            return False
+    except Exception:
+        return False
+    return False
+
+
+@app.after_request
+def _dynamic_cors(response):
+    """Añade encabezados CORS dinámicos basados en el Origin de la petición.
+
+    Esto permite aceptar orígenes que pertenezcan a las CIDR listadas.
+    """
+    origin = request.headers.get('Origin')
+    if origin and _origin_allowed(origin):
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Vary'] = 'Origin'
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    return response
 
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///site.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
