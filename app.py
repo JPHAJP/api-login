@@ -32,7 +32,7 @@ _EXPLICIT_ORIGINS = [
     'http://34.213.214.55', 'https://34.213.214.55',
     'http://35.164.95.156', 'https://35.164.95.156',
     'http://44.230.95.183', 'https://44.230.95.183',
-    'http://44.229.200.200', 'https://44.229.200.200'
+    'http://44.229.200.200', 'https://44.229.200.200', 'https://login-proyect-umber.vercel.app/'
 ]
 
 # Redes CIDR que aceptamos (se comprobará contra la IP del origen)
