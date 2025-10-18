@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script para crear un usuario administrador en la API v2
+Script para crear un usuario administrador en la API FastAPI v2
 """
 
 import os
@@ -10,13 +10,19 @@ from getpass import getpass
 # Agregar el directorio actual al path para importar los módulos
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from app import app, db
+from database import SessionLocal, create_tables
 from models import User
 
 def create_admin():
     """Crear un usuario administrador"""
     
-    with app.app_context():
+    # Crear las tablas si no existen
+    create_tables()
+    
+    # Crear sesión de base de datos
+    db = SessionLocal()
+    
+    try:
         print("🔧 Creación de Usuario Administrador")
         print("=" * 40)
         
@@ -28,7 +34,7 @@ def create_admin():
             return False
         
         # Verificar si ya existe
-        existing_user = User.query.filter_by(email=email).first()
+        existing_user = db.query(User).filter(User.email == email).first()
         if existing_user:
             print(f"❌ Ya existe un usuario con el email: {email}")
             return False
@@ -69,8 +75,9 @@ def create_admin():
             )
             admin.set_password(password)
             
-            db.session.add(admin)
-            db.session.commit()
+            db.add(admin)
+            db.commit()
+            db.refresh(admin)
             
             print(f"🎉 Administrador creado exitosamente!")
             print(f"   Email: {email}")
@@ -82,8 +89,11 @@ def create_admin():
             
         except Exception as e:
             print(f"❌ Error al crear administrador: {e}")
-            db.session.rollback()
+            db.rollback()
             return False
+    
+    finally:
+        db.close()
 
 if __name__ == "__main__":
     if create_admin():

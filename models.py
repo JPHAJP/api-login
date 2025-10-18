@@ -1,35 +1,70 @@
 from datetime import datetime
-from flask_sqlalchemy import SQLAlchemy
-from werkzeug.security import generate_password_hash, check_password_hash
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import relationship
+import bcrypt
 
-db = SQLAlchemy()
+Base = declarative_base()
+
 ROLE_CHOICES = ("admin", "voluntarios", "personal", "servicio_social", "visitas", "familiares", "donantes", "proveedores")
 
-class User(db.Model):
+class User(Base):
     __tablename__ = 'users'
-    id = db.Column(db.Integer, primary_key=True)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    password_hash = db.Column(db.String(255), nullable=False)
-    nombre_completo = db.Column(db.String(100), nullable=False)
-    apellidos = db.Column(db.String(100), nullable=False)
-    direccion = db.Column(db.String(255), nullable=False)
-    edad = db.Column(db.Integer, nullable=False)
-    telefono = db.Column(db.String(20), nullable=False)
-    role = db.Column(db.String(20), nullable=False, default="voluntarios", server_default="voluntarios", index=True)
-    is_authorized = db.Column(db.Boolean, nullable=False, default=False, server_default='0', index=True)
-    foto_identificacion_path = db.Column(db.String(255), nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.now, nullable=False)
-    authorized_at = db.Column(db.DateTime, nullable=True)
-    authorized_by_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(120), unique=True, nullable=False, index=True)
+    password_hash = Column(String(255), nullable=False)
+    nombre_completo = Column(String(100), nullable=False)
+    apellidos = Column(String(100), nullable=False)
+    direccion = Column(String(255), nullable=False)
+    edad = Column(Integer, nullable=False)
+    telefono = Column(String(20), nullable=False)
+    role = Column(String(20), nullable=False, default="voluntarios", index=True)
+    is_authorized = Column(Boolean, nullable=False, default=False, index=True)
+    foto_identificacion_path = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+    authorized_at = Column(DateTime, nullable=True)
+    authorized_by_id = Column(Integer, ForeignKey('users.id'), nullable=True)
     
     # Relación para saber qué admin autorizó al usuario
-    authorized_by = db.relationship('User', remote_side=[id], backref='authorized_users')
+    authorized_by = relationship('User', remote_side=[id], back_populates='authorized_users')
+    authorized_users = relationship('User', remote_side=[authorized_by_id])
 
     def set_password(self, raw_password: str):
-        self.password_hash = generate_password_hash(raw_password)
+        # Convertir la contraseña a bytes y generar hash
+        password_bytes = raw_password.encode('utf-8')
+        salt = bcrypt.gensalt()
+        self.password_hash = bcrypt.hashpw(password_bytes, salt).decode('utf-8')
 
     def check_password(self, raw_password: str) -> bool:
-        return check_password_hash(self.password_hash, raw_password)
+        # Verificar la contraseña
+        try:
+            # Validar que el hash existe y no está vacío
+            if not self.password_hash:
+                return False
+            
+            # Validar que el hash tiene el formato correcto de bcrypt
+            if not (self.password_hash.startswith('$2a$') or 
+                    self.password_hash.startswith('$2b$') or 
+                    self.password_hash.startswith('$2y$')):
+                return False
+            
+            # Validar que el hash tiene la longitud correcta (60 caracteres)
+            if len(self.password_hash) != 60:
+                return False
+                
+            password_bytes = raw_password.encode('utf-8')
+            hash_bytes = self.password_hash.encode('utf-8')
+            return bcrypt.checkpw(password_bytes, hash_bytes)
+            
+        except ValueError as e:
+            # Log del error para debugging
+            print(f"Error de validación de contraseña para usuario {self.email}: {e}")
+            return False
+        except Exception as e:
+            # Log de cualquier otro error
+            print(f"Error inesperado al validar contraseña para usuario {self.email}: {e}")
+            return False
     
     def to_dict(self):
         return {
