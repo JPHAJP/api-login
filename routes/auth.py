@@ -15,9 +15,10 @@ from utils.auth import (
     get_refresh_token_user, _normalize_email, validate_phone, 
     allowed_file
 )
+from utils.google_drive import upload_identification_image
 from config import (
     ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS, 
-    UPLOAD_FOLDER, ALLOWED_EXTENSIONS
+    UPLOAD_FOLDER, ALLOWED_EXTENSIONS, GOOGLE_DRIVE_ENABLED
 )
 
 router = APIRouter(prefix="/auth", tags=["Autenticación"])
@@ -94,25 +95,19 @@ async def register(
             detail="El email ya está registrado."
         )
     
-    # Guardar archivo de identificación
+    # Leer contenido del archivo de identificación
     filename = secure_filename(foto_identificacion.filename)
     file_extension = filename.rsplit('.', 1)[1].lower()
     
-    # Crear nombre único para el archivo
-    unique_filename = f"temp_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{filename}"
-    file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
-    
     try:
         content = await foto_identificacion.read()
-        with open(file_path, "wb") as f:
-            f.write(content)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error al guardar el archivo de identificación."
+            detail="Error al leer el archivo de identificación."
         )
     
-    # Crear usuario
+    # Crear usuario temporalmente para obtener el ID
     try:
         user = User(
             email=normalized_email,
@@ -123,7 +118,6 @@ async def register(
             telefono=telefono.strip(),
             role=role,
             is_authorized=False,  # Requiere autorización de admin
-            foto_identificacion_path=file_path
         )
         
         # Establecer la contraseña usando el método del modelo
@@ -133,31 +127,87 @@ async def register(
         db.commit()
         db.refresh(user)
         
-        # Renombrar archivo con ID del usuario
-        new_filename = f"user_{user.id}_id.{file_extension}"
-        new_file_path = os.path.join(UPLOAD_FOLDER, new_filename)
+        # Guardar archivo (Google Drive o local según configuración)
+        if GOOGLE_DRIVE_ENABLED:
+            # Subir archivo a Google Drive
+            drive_result = upload_identification_image(content, user.id, file_extension)
+            
+            if not drive_result.get('success'):
+                # Si falla la subida a Drive, eliminar usuario y mostrar error
+                db.delete(user)
+                db.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Error al subir archivo a Google Drive: {drive_result.get('error', 'Error desconocido')}"
+                )
+            
+            # Actualizar usuario con ID de Google Drive
+            user.foto_identificacion_drive_id = drive_result.get('file_id')
+            user.foto_identificacion_path = f"drive://{drive_result.get('file_id')}"
+            
+        else:
+            # Guardar archivo localmente (método original)
+            filename = secure_filename(foto_identificacion.filename)
+            unique_filename = f"user_{user.id}_id.{file_extension}"
+            file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
+            
+            try:
+                with open(file_path, "wb") as f:
+                    f.write(content)
+                user.foto_identificacion_path = file_path
+            except Exception as e:
+                # Si falla el guardado local, eliminar usuario y mostrar error
+                db.delete(user)
+                db.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Error al guardar el archivo de identificación localmente."
+                )
         
-        os.rename(file_path, new_file_path)
-        user.foto_identificacion_path = new_file_path
         db.commit()
+        
+        # Preparar información de respuesta
+        user_info = {
+            "id": user.id,
+            "email": user.email,
+            "nombre_completo": user.nombre_completo,
+            "apellidos": user.apellidos,
+            "role": user.role,
+            "is_authorized": user.is_authorized,
+            "created_at": user.created_at.isoformat()
+        }
+        
+        # Agregar información del archivo según el método de almacenamiento
+        if GOOGLE_DRIVE_ENABLED and 'drive_result' in locals():
+            user_info["foto_identificacion_info"] = {
+                "storage_type": "google_drive",
+                "drive_id": drive_result.get('file_id'),
+                "drive_url": drive_result.get('drive_url'),
+                "upload_time": drive_result.get('created_time')
+            }
+        else:
+            user_info["foto_identificacion_info"] = {
+                "storage_type": "local",
+                "file_path": user.foto_identificacion_path if user.foto_identificacion_path else None
+            }
         
         return {
             "message": "Usuario registrado exitosamente. Pendiente de autorización por un administrador.",
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "nombre_completo": user.nombre_completo,
-                "apellidos": user.apellidos,
-                "role": user.role,
-                "is_authorized": user.is_authorized,
-                "created_at": user.created_at.isoformat()
-            }
+            "user": user_info
         }
         
+    except HTTPException:
+        # Re-lanzar HTTPException tal como están
+        raise
     except Exception as e:
-        # Limpiar archivo si hay error
-        if os.path.exists(file_path):
-            os.remove(file_path)
+        # Limpiar usuario si hay error
+        try:
+            if 'user' in locals() and user.id:
+                db.delete(user)
+                db.commit()
+        except:
+            pass
+        
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

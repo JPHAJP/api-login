@@ -8,22 +8,25 @@ Sistema completo de autenticación REST API construido con Flask que proporciona
 - ✅ Sistema de autorización administrativa para nuevos usuarios
 - ✅ 8 roles de usuario diferentes con permisos específicos
 - ✅ Autenticación JWT con tokens de acceso y refresh
+- ✅ **Almacenamiento de imágenes en Google Drive o local**
 - ✅ Gestión de fotografías de identificación oficial
 - ✅ Validación de email, teléfono y datos personales
 - ✅ Panel administrativo para aprobar/rechazar usuarios
-- ✅ Base de datos SQLite con SQLAlchemy ORM
+- ✅ Base de datos PostgreSQL/SQLite con SQLAlchemy ORM
 - ✅ Seguridad con hash de contraseñas
 - ✅ Endpoints protegidos por roles
+- ✅ **Migración automática de archivos locales a Google Drive**
 
 ## Stack Tecnológico
 
-- **Framework**: Flask 3.1.2
-- **Base de Datos**: SQLite con SQLAlchemy ORM
-- **Autenticación**: JWT tokens usando Flask-JWT-Extended
-- **Hash de Contraseñas**: Werkzeug security utilities
+- **Framework**: FastAPI 0.119.0
+- **Base de Datos**: PostgreSQL/SQLite con SQLAlchemy ORM
+- **Autenticación**: JWT tokens usando python-jose
+- **Hash de Contraseñas**: bcrypt
 - **Validación de Email**: email-validator library
-- **Manejo de Archivos**: Werkzeug file utilities
+- **Manejo de Archivos**: Werkzeug file utilities + **Google Drive API**
 - **Variables de Entorno**: python-dotenv
+- **Almacenamiento en la Nube**: Google Drive API v3
 
 ## Roles del Sistema
 
@@ -63,12 +66,19 @@ pip install -r requirements.txt
 4. Create a `.env` file in the root directory:
 
 ```env
-DATABASE_URL=sqlite:///site.db
+DATABASE_URL=sqlite:///./api_login.db
 JWT_SECRET_KEY=tu-clave-super-secreta-aqui-cambiala-en-produccion
 ACCESS_TOKEN_EXPIRES=15
 REFRESH_TOKEN_EXPIRES_DAYS=7
 UPLOAD_FOLDER=data/identificaciones
 MAX_FILE_SIZE=5242880
+
+# Google Drive Configuration (Optional)
+GOOGLE_DRIVE_ENABLED=true
+GOOGLE_CREDENTIALS_PATH=credentials.json
+GOOGLE_TOKEN_PATH=token.json
+GOOGLE_SERVICE_ACCOUNT_PATH=service-account-key.json
+GOOGLE_DRIVE_FOLDER_ID=your_drive_folder_id
 ```
 
 5. Create dir:
@@ -77,24 +87,59 @@ mkdir -p data/identificaciones
 mkdir -p instance
 ```
 
-6. Run the application:
+6. (Optional) Configure Google Drive:
+
+Si quieres almacenar las imágenes en Google Drive en lugar de localmente, sigue la guía completa en [`docs/GOOGLE_DRIVE_SETUP.md`](docs/GOOGLE_DRIVE_SETUP.md).
+
+7. Run the database migration:
 
 ```bash
-python app.py
+python utils/migrate_drive_field.py
+```
+
+8. Run the application:
+
+```bash
+python main.py
+# or with uvicorn
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 The API will be available at `http://localhost:8000`
+
+## 📁 Almacenamiento de Imágenes
+
+Este sistema soporta dos métodos de almacenamiento para las imágenes de identificación:
+
+### 🏠 Almacenamiento Local (Por defecto)
+- Las imágenes se guardan en la carpeta `data/identificaciones/`
+- Funciona sin configuración adicional
+- Ideal para desarrollo y pequeñas instalaciones
+
+### ☁️ Almacenamiento en Google Drive (Recomendado)
+- Las imágenes se almacenan en Google Drive
+- Mayor seguridad y respaldo automático
+- Escalable para grandes volúmenes
+- **Guía completa**: [`docs/GOOGLE_DRIVE_SETUP.md`](docs/GOOGLE_DRIVE_SETUP.md)
+
+Para cambiar entre métodos, modifica la variable `GOOGLE_DRIVE_ENABLED` en tu archivo `.env`.
 
 ## Environment Variables
 
 | Variable                     | Description                             | Default Value       |
 | ---------------------------- | --------------------------------------- | ------------------- |
-| `DATABASE_URL`               | Database connection string              | `sqlite:///site.db` |
+| `DATABASE_URL`               | Database connection string              | `sqlite:///./api_login.db` |
 | `JWT_SECRET_KEY`             | Secret key for JWT token signing        | `super-secret`      |
 | `ACCESS_TOKEN_EXPIRES`       | Access token expiration time in minutes | `15`                |
 | `REFRESH_TOKEN_EXPIRES_DAYS` | Refresh token expiration time in days   | `7`                 |
 | `UPLOAD_FOLDER`              | Carpeta para almacenar identificaciones | `data/identificaciones`|
 | `MAX_FILE_SIZE`              | Tamaño máximo de archivo (bytes)        | `5242880` (5MB)     |
+| **Google Drive Variables**   |                                         |                     |
+| `GOOGLE_DRIVE_ENABLED`       | Habilitar almacenamiento en Google Drive| `false`             |
+| `GOOGLE_CREDENTIALS_PATH`    | Ruta a credentials.json (OAuth)         | `credentials.json`  |
+| `GOOGLE_TOKEN_PATH`          | Ruta a token.json (OAuth)               | `token.json`        |
+| `GOOGLE_SERVICE_ACCOUNT_PATH`| Ruta a service account key (Producción) | `null`              |
+| `GOOGLE_DRIVE_FOLDER_ID`     | ID de carpeta específica en Drive       | `null` (raíz)       |
 
 ## API Endpoints
 
@@ -313,6 +358,51 @@ Authorization: Bearer <access_token>
 **Response (200 OK):**
 Devuelve la imagen directamente (image/jpeg o image/png)
 
+## 📷 Endpoints de Gestión de Imágenes
+
+### Descargar Imagen de Identificación
+```http
+GET /images/identification/{user_id}
+Authorization: Bearer <access_token>
+```
+**Permisos**: Administradores o el propio usuario
+
+**Response (200 OK):**
+Devuelve la imagen directamente desde Google Drive o almacenamiento local
+
+### Obtener Información de Imagen
+```http
+GET /images/identification/{user_id}/info
+Authorization: Bearer <access_token>
+```
+**Permisos**: Administradores o el propio usuario
+
+**Response (200 OK):**
+```json
+{
+  "user_id": 5,
+  "has_identification": true,
+  "drive_id": "1ABC123def456GHI789jkl",
+  "legacy_path": "drive://1ABC123def456GHI789jkl",
+  "drive_url": "https://drive.google.com/file/d/1ABC123def456GHI789jkl/view"
+}
+```
+
+### Eliminar Imagen de Identificación
+```http
+DELETE /images/identification/{user_id}
+Authorization: Bearer <access_token>
+```
+**Permisos**: Solo administradores
+
+**Response (200 OK):**
+```json
+{
+  "message": "Imagen de identificación del usuario 5 eliminada exitosamente.",
+  "drive_response": "Archivo eliminado correctamente"
+}
+```
+
 ### Estadísticas sistema
 ```http
 GET /admin/stats
@@ -475,20 +565,39 @@ CREATE INDEX idx_users_created_at ON users(created_at);
 
 ```
 api-login/
-├── app.py                      # Aplicación principal Flask
-├── models.py                   # Modelos de base de datos
+├── main.py                     # Aplicación principal FastAPI
+├── config.py                   # Configuración y variables de entorno
+├── database.py                 # Configuración de base de datos
+├── models.py                   # Modelos de SQLAlchemy
+├── schemas.py                  # Esquemas de Pydantic
 ├── requirements.txt            # Dependencias Python
 ├── .env                        # Variables de entorno (no incluir en git)
+├── .env.example                # Ejemplo de variables de entorno
 ├── .gitignore                  # Archivos a ignorar en git
-├── openapi.yaml                # Especificación OpenAPI 3.0
 ├── README.md                   # Este archivo
+├── routes/
+│   ├── __init__.py
+│   ├── auth.py                 # Endpoints de autenticación
+│   ├── user.py                 # Endpoints de usuario
+│   ├── admin.py                # Endpoints administrativos
+│   └── images.py               # Gestión de imágenes (nuevo)
+├── utils/
+│   ├── __init__.py
+│   ├── auth.py                 # Utilidades de autenticación
+│   ├── google_drive.py         # Integración con Google Drive (nuevo)
+│   ├── migrate_drive_field.py  # Migración de BD para Google Drive (nuevo)
+│   ├── migrate_to_drive.py     # Migración de archivos a Google Drive (nuevo)
+│   └── test_google_drive.py    # Tests de Google Drive (nuevo)
+├── docs/
+│   └── GOOGLE_DRIVE_SETUP.md   # Guía de configuración de Google Drive (nuevo)
 ├── data/
-│   └── identificaciones/       # Fotografías de identificación
+│   └── identificaciones/       # Fotografías locales (compatibilidad)
 │       ├── user_1_id.jpg
 │       ├── user_2_id.png
 │       └── ...
-├── instance/
-│   └── site.db                 # Base de datos SQLite
+├── credentials.json            # Credenciales OAuth Google (no incluir en git)
+├── token.json                  # Token OAuth Google (generado automáticamente)
+├── service-account-key.json    # Service Account Google (no incluir en git)
 └── __pycache__/                # Cache de Python
 ```
 
@@ -502,7 +611,34 @@ The application runs in debug mode by default when started with `python app.py`.
 
 ### Database Management
 
-The database is automatically created when the application starts. To reset the database, simply delete the `instance/site.db` file and restart the application.
+The database is automatically created when the application starts. Para gestionar cambios en la estructura:
+
+```bash
+# Migrar base de datos para Google Drive
+python utils/migrate_drive_field.py
+
+# Verificar estado de migración de archivos
+python utils/migrate_to_drive.py verify
+
+# Migrar archivos locales existentes a Google Drive
+python utils/migrate_to_drive.py
+
+# Probar configuración de Google Drive
+python utils/test_google_drive.py
+```
+
+### Google Drive Management
+
+```bash
+# Test Google Drive connection
+python utils/test_google_drive.py
+
+# Migrate existing local files to Google Drive  
+python utils/migrate_to_drive.py
+
+# Check migration status
+python utils/migrate_to_drive.py verify
+```
 
 ## Production Considerations
 

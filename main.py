@@ -12,6 +12,7 @@ from models import Base
 from routes.auth import router as auth_router
 from routes.user import router as user_router
 from routes.admin import router as admin_router
+from routes.images import router as images_router
 
 load_dotenv()
 
@@ -129,6 +130,7 @@ async def cors_handler(request: Request, call_next):
 app.include_router(auth_router)
 app.include_router(user_router)
 app.include_router(admin_router)
+app.include_router(images_router)
 
 # Endpoints públicos
 @app.get('/health')

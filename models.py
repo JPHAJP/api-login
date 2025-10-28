@@ -28,7 +28,8 @@ class User(Base):
     is_authorized = Column(Boolean, nullable=False, default=False, index=True)
     authorization_status = Column(String(20), nullable=False, default="pending", index=True)  # pending, authorized, unauthorized
     authorization_info = Column(Text, nullable=False, default="Pendiente de autorización")
-    foto_identificacion_path = Column(String(255), nullable=True)
+    foto_identificacion_path = Column(String(255), nullable=True)  # Mantener para compatibilidad
+    foto_identificacion_drive_id = Column(String(255), nullable=True)  # ID de Google Drive
     created_at = Column(DateTime, default=datetime.now, nullable=False)
     authorized_at = Column(DateTime, nullable=True)
     unauthorized_at = Column(DateTime, nullable=True)  # Nueva fecha de desautorización
@@ -95,6 +96,7 @@ class User(Base):
             'authorization_status': self.authorization_status,
             'authorization_info': self.authorization_info,
             'foto_identificacion_path': self.foto_identificacion_path,
+            'foto_identificacion_drive_id': self.foto_identificacion_drive_id,
             "created_at": self.created_at.isoformat() if hasattr(self, 'created_at') else None,
             "authorized_at": self.authorized_at.isoformat() if hasattr(self, 'authorized_at') and self.authorized_at else None,
             "unauthorized_at": self.unauthorized_at.isoformat() if hasattr(self, 'unauthorized_at') and self.unauthorized_at else None

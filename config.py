@@ -18,5 +18,12 @@ ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 QR_EXPIRY_MINUTES = 5
 QR_ACCESS_SECRET = os.getenv('QR_ACCESS_SECRET', 'qr-access-secret-key')
 
-# Crear directorio de uploads si no existe
+# Configuración Google Drive
+GOOGLE_CREDENTIALS_PATH = os.getenv('GOOGLE_CREDENTIALS_PATH', 'credentials.json')
+GOOGLE_TOKEN_PATH = os.getenv('GOOGLE_TOKEN_PATH', 'token.json')
+GOOGLE_SERVICE_ACCOUNT_PATH = os.getenv('GOOGLE_SERVICE_ACCOUNT_PATH')
+GOOGLE_DRIVE_FOLDER_ID = os.getenv('GOOGLE_DRIVE_FOLDER_ID')
+GOOGLE_DRIVE_ENABLED = os.getenv('GOOGLE_DRIVE_ENABLED', 'false').lower() == 'true'
+
+# Crear directorio de uploads si no existe (para compatibilidad)
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
