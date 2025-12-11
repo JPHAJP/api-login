@@ -10,23 +10,23 @@ CREATE SCHEMA IF NOT EXISTS volunteer;
 --
 -- Datatypes creation
 --
-DROP TYPE IF EXISTS volunteer.GENDER CASCADE;
-CREATE TYPE volunteer.GENDER AS ENUM (
+DROP TYPE IF EXISTS volunteer.gender CASCADE;
+CREATE TYPE volunteer.gender AS ENUM (
     'mujer',
     'hombre'
     );
-COMMENT ON TYPE volunteer.GENDER IS $comment$Volunteer gender$comment$;
+COMMENT ON TYPE volunteer.gender IS $comment$Volunteer gender$comment$;
 
-DROP TYPE IF EXISTS volunteer.STATUS CASCADE;
-CREATE TYPE volunteer.STATUS AS ENUM (
+DROP TYPE IF EXISTS volunteer.status CASCADE;
+CREATE TYPE volunteer.status AS ENUM (
     'active',
     'inactive',
     'rejected'
     );
-COMMENT ON TYPE volunteer.STATUS IS $comment$Volunteer status$comment$;
+COMMENT ON TYPE volunteer.status IS $comment$Volunteer status$comment$;
 
-DROP TYPE IF EXISTS volunteer.AREA CASCADE;
-CREATE TYPE volunteer.AREA AS ENUM (
+DROP TYPE IF EXISTS volunteer.area CASCADE;
+CREATE TYPE volunteer.area AS ENUM (
     'administracion',
     'bazar',
     'cocina',
@@ -36,10 +36,10 @@ CREATE TYPE volunteer.AREA AS ENUM (
     'preescolar',
     'procuracion'
     );
-COMMENT ON TYPE volunteer.AREA IS $comment$Volunteer area$comment$;
+COMMENT ON TYPE volunteer.area IS $comment$Volunteer area$comment$;
 
-DROP TYPE IF EXISTS volunteer.WORKDAY CASCADE;
-CREATE TYPE volunteer.WORKDAY AS ENUM (
+DROP TYPE IF EXISTS volunteer.workday CASCADE;
+CREATE TYPE volunteer.workday AS ENUM (
     'monday',
     'tuesday',
     'wednesday',
@@ -48,10 +48,10 @@ CREATE TYPE volunteer.WORKDAY AS ENUM (
     'saturday',
     'sunday'
     );
-COMMENT ON TYPE volunteer.WORKDAY IS $comment$Volunteer work day$comment$;
+COMMENT ON TYPE volunteer.workday IS $comment$Volunteer work day$comment$;
 
-DROP TYPE IF EXISTS volunteer.DOCUMENT_TYPE CASCADE;
-CREATE TYPE volunteer.DOCUMENT_TYPE AS ENUM (
+DROP TYPE IF EXISTS volunteer.document_type CASCADE;
+CREATE TYPE volunteer.document_type AS ENUM (
     'official_id_elec',
     'official_id_physical',
     'domicilio_electronic',
@@ -73,48 +73,48 @@ CREATE TYPE volunteer.DOCUMENT_TYPE AS ENUM (
     'fotos_electronic',
     'fotos_physical'
     );
-COMMENT ON TYPE volunteer.DOCUMENT_TYPE IS $comment$Volunteer document type$comment$;
+COMMENT ON TYPE volunteer.document_type IS $comment$Volunteer document type$comment$;
 
-DROP TYPE IF EXISTS volunteer.DOCUMENT_STATUS CASCADE;
-CREATE TYPE volunteer.DOCUMENT_STATUS AS ENUM (
+DROP TYPE IF EXISTS volunteer.document_status CASCADE;
+CREATE TYPE volunteer.document_status AS ENUM (
     'pending',
     'received',
     'archived'
     );
-COMMENT ON TYPE volunteer.DOCUMENT_STATUS IS $comment$Volunteer document status$comment$;
+COMMENT ON TYPE volunteer.document_status IS $comment$Volunteer document status$comment$;
 
-DROP TYPE IF EXISTS volunteer.MEETING_TYPE CASCADE;
-CREATE TYPE volunteer.MEETING_TYPE AS ENUM (
+DROP TYPE IF EXISTS volunteer.meeting_type CASCADE;
+CREATE TYPE volunteer.meeting_type AS ENUM (
     'interest',
     'call',
     'interview_planning',
     'interview',
     'introduction'
     );
-COMMENT ON TYPE volunteer.MEETING_TYPE IS $comment$Volunteer document meeting type$comment$;
+COMMENT ON TYPE volunteer.meeting_type IS $comment$Volunteer document meeting type$comment$;
 
-DROP TYPE IF EXISTS volunteer.MEETING_STATUS CASCADE;
-CREATE TYPE volunteer.MEETING_STATUS AS ENUM (
+DROP TYPE IF EXISTS volunteer.meeting_status CASCADE;
+CREATE TYPE volunteer.meeting_status AS ENUM (
     'pending',
     'done'
     );
-COMMENT ON TYPE volunteer.MEETING_STATUS IS $comment$Volunteer meeting status$comment$;
+COMMENT ON TYPE volunteer.meeting_status IS $comment$Volunteer meeting status$comment$;
 
-DROP TYPE IF EXISTS volunteer.MATERIAL_TYPE CASCADE;
-CREATE TYPE volunteer.MATERIAL_TYPE AS ENUM (
+DROP TYPE IF EXISTS volunteer.material_type CASCADE;
+CREATE TYPE volunteer.material_type AS ENUM (
     'uniform',
     'badge'
     );
-COMMENT ON TYPE volunteer.MATERIAL_TYPE IS $comment$Volunteer document material type$comment$;
+COMMENT ON TYPE volunteer.material_type IS $comment$Volunteer document material type$comment$;
 
-DROP TYPE IF EXISTS volunteer.MATERIAL_STATUS CASCADE;
-CREATE TYPE volunteer.MATERIAL_STATUS AS ENUM (
+DROP TYPE IF EXISTS volunteer.material_status CASCADE;
+CREATE TYPE volunteer.material_status AS ENUM (
     'pending',
     'paid',
     'ready',
     'distributed'
     );
-COMMENT ON TYPE volunteer.MATERIAL_STATUS IS $comment$Volunteer material status$comment$;
+COMMENT ON TYPE volunteer.material_status IS $comment$Volunteer material status$comment$;
 
 --
 -- Tables creation
@@ -123,15 +123,16 @@ DROP TABLE IF EXISTS volunteer.volunteer;
 CREATE TABLE IF NOT EXISTS volunteer.volunteer
 (
     id         SERIAL PRIMARY KEY,
-    email      VARCHAR(50) UNIQUE NOT NULL,
-    name       TEXT,
-    surname    TEXT,
+    email      VARCHAR(120) UNIQUE NOT NULL,
+    name       VARCHAR(10) NOT NULL,
+    surname    VARCHAR(10) NOT NULL,
     birthdate  DATE,
-    gender     volunteer.GENDER DEFAULT 'mujer'::volunteer.GENDER,
+    gender     volunteer.gender DEFAULT 'mujer'::volunteer.GENDER,
     phone      TEXT,
+    address    VARCHAR( 255),
     occupacion TEXT,
     joined     DATE,
-    status     volunteer.STATUS DEFAULT 'inactive'::volunteer.STATUS,
+    status     volunteer.status DEFAULT 'inactive'::volunteer.status,
     created    TIMESTAMP        DEFAULT NOW(),
     updated    TIMESTAMP        DEFAULT NOW()
 );
@@ -150,7 +151,7 @@ CREATE TABLE IF NOT EXISTS volunteer.volunteer_area_lookup
 (
     id           SERIAL PRIMARY KEY,
     volunteer_id INT REFERENCES volunteer.volunteer (id),
-    area_id      volunteer.AREA NOT NULL,
+    area_id      volunteer.area NOT NULL,
     start_date   DATE           NOT NULL,
     end_date     DATE           NOT NULL,
     created      TIMESTAMP DEFAULT NOW(),
@@ -162,7 +163,7 @@ DROP TABLE IF EXISTS volunteer.work_plan;
 CREATE TABLE IF NOT EXISTS volunteer.work_plan
 (
     id         SERIAL PRIMARY KEY,
-    day        volunteer.WORKDAY NOT NULL,
+    day        volunteer.workday NOT NULL,
     hour_start TEXT,
     hour_end   TEXT,
     created    TIMESTAMP DEFAULT NOW(),
@@ -175,8 +176,8 @@ CREATE TABLE IF NOT EXISTS volunteer.document
 (
     id           SERIAL PRIMARY KEY,
     volunteer_id INT REFERENCES volunteer.volunteer (id),
-    doc_type     volunteer.DOCUMENT_TYPE NOT NULL,
-    doc_status   volunteer.DOCUMENT_STATUS DEFAULT 'pending'::volunteer.DOCUMENT_STATUS,
+    doc_type     volunteer.document_type NOT NULL,
+    doc_status   volunteer.document_status DEFAULT 'pending'::volunteer.document_status,
     created      TIMESTAMP                 DEFAULT NOW(),
     updated      TIMESTAMP                 DEFAULT NOW()
 
@@ -188,8 +189,8 @@ CREATE TABLE IF NOT EXISTS volunteer.meeting
 (
     id             SERIAL PRIMARY KEY,
     volunteer_id   INT REFERENCES volunteer.volunteer (id),
-    meeting_type   volunteer.MEETING_TYPE   DEFAULT 'interest'::volunteer.MEETING_TYPE,
-    meeting_status volunteer.MEETING_STATUS DEFAULT 'pending'::volunteer.MEETING_STATUS,
+    meeting_type   volunteer.meeting_type   DEFAULT 'interest'::volunteer.meeting_type,
+    meeting_status volunteer.meeting_status DEFAULT 'pending'::volunteer.meeting_status,
     created        TIMESTAMP                DEFAULT NOW(),
     updated        TIMESTAMP                DEFAULT NOW()
 );
@@ -200,8 +201,8 @@ CREATE TABLE IF NOT EXISTS volunteer.material
 (
     id              SERIAL PRIMARY KEY,
     volunteer_id    INT REFERENCES volunteer.volunteer (id),
-    material_type   volunteer.MATERIAL_TYPE   DEFAULT 'badge'::volunteer.MATERIAL_TYPE,
-    material_status volunteer.MATERIAL_STATUS DEFAULT 'pending'::volunteer.MATERIAL_STATUS,
+    material_type   volunteer.material_type   DEFAULT 'badge'::volunteer.material_type,
+    material_status volunteer.material_status DEFAULT 'pending'::volunteer.material_status,
     created         TIMESTAMP                 DEFAULT NOW(),
     updated         TIMESTAMP                 DEFAULT NOW()
 );
@@ -301,26 +302,26 @@ FROM CROSSTAB(
                  $query$)
          AS ct (
                 volunteer_id INT,
-                official_id_elec volunteer.DOCUMENT_STATUS,
-                official_id_physical volunteer.DOCUMENT_STATUS,
-                domicilio_electronic volunteer.DOCUMENT_STATUS,
-                domicilio_physical volunteer.DOCUMENT_STATUS,
-                COVID_vaccine_electronic volunteer.DOCUMENT_STATUS,
-                COVID_vaccine_physical volunteer.DOCUMENT_STATUS,
-                recomendation_electronic volunteer.DOCUMENT_STATUS,
-                recomendation_physical volunteer.DOCUMENT_STATUS,
-                manual_electronic volunteer.DOCUMENT_STATUS,
-                manual_physical volunteer.DOCUMENT_STATUS,
-                medical_form_electronic volunteer.DOCUMENT_STATUS,
-                medical_form_physical volunteer.DOCUMENT_STATUS,
-                engagement_card_electronic volunteer.DOCUMENT_STATUS,
-                engagement_card_physical volunteer.DOCUMENT_STATUS,
-                volunteer_entry_form_electronic volunteer.DOCUMENT_STATUS,
-                volunteer_entry_form_physical volunteer.DOCUMENT_STATUS,
-                criminal_record_cert_electronic volunteer.DOCUMENT_STATUS,
-                criminal_record_cert_physical volunteer.DOCUMENT_STATUS,
-                fotos_electronic volunteer.DOCUMENT_STATUS,
-                fotos_physical volunteer.DOCUMENT_STATUS
+                official_id_elec volunteer.document_status,
+                official_id_physical volunteer.document_status,
+                domicilio_electronic volunteer.document_status,
+                domicilio_physical volunteer.document_status,
+                COVID_vaccine_electronic volunteer.document_status,
+                COVID_vaccine_physical volunteer.document_status,
+                recomendation_electronic volunteer.document_status,
+                recomendation_physical volunteer.document_status,
+                manual_electronic volunteer.document_status,
+                manual_physical volunteer.document_status,
+                medical_form_electronic volunteer.document_status,
+                medical_form_physical volunteer.document_status,
+                engagement_card_electronic volunteer.document_status,
+                engagement_card_physical volunteer.document_status,
+                volunteer_entry_form_electronic volunteer.document_status,
+                volunteer_entry_form_physical volunteer.document_status,
+                criminal_record_cert_electronic volunteer.document_status,
+                criminal_record_cert_physical volunteer.document_status,
+                fotos_electronic volunteer.document_status,
+                fotos_physical volunteer.document_status
         );
 COMMENT ON VIEW volunteer.volunteer_document_overview IS $comment$Volunteer documents status overview$comment$;
 
@@ -376,6 +377,7 @@ SELECT
     vv.birthdate,
     vv.gender,
     vv.phone,
+    vv.address,
     vv.occupacion,
     vv.joined,
     vv.status,
