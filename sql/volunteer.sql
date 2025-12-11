@@ -93,6 +93,7 @@ CREATE TYPE volunteer.meeting_type AS ENUM (
     );
 COMMENT ON TYPE volunteer.meeting_type IS $comment$Volunteer document meeting type$comment$;
 
+
 DROP TYPE IF EXISTS volunteer.meeting_status CASCADE;
 CREATE TYPE volunteer.meeting_status AS ENUM (
     'pending',
@@ -124,8 +125,8 @@ CREATE TABLE IF NOT EXISTS volunteer.volunteer
 (
     id         SERIAL PRIMARY KEY,
     email      VARCHAR(120) UNIQUE NOT NULL,
-    name       VARCHAR(10) NOT NULL,
-    surname    VARCHAR(10) NOT NULL,
+    name       VARCHAR(50) NOT NULL,
+    surname    VARCHAR(50) NOT NULL,
     birthdate  DATE,
     gender     volunteer.gender DEFAULT 'mujer'::volunteer.GENDER,
     phone      TEXT,
@@ -381,8 +382,8 @@ SELECT
     vv.occupacion,
     vv.joined,
     vv.status,
-    vv.created,
-    vv.updated,
+    vv.created_at,
+    vv.updated_at,
     vv_meeting_o.call,
     vv_meeting_o.interest,
     vv_meeting_o.interview_planning,
