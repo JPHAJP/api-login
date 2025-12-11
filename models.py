@@ -13,6 +13,12 @@ class AccessType(enum.Enum):
     ENTRY = "entry"
     EXIT = "exit"
 
+class Created_atMixin(object):
+    created_at = Column(DateTime, default=datetime.now, nullable=False)
+
+class Updated_atMixin(object):
+    updated_at = Column(DateTime, default=datetime.now, nullable=False)
+
 class User(Base):
     __tablename__ = 'users'
 
@@ -169,7 +175,7 @@ class AccessLog(Base):
         return f"AccessLog(user_id={self.user_id}, type='{self.access_type.value}', timestamp='{self.timestamp}')"
 
 
-class Document(Base):
+class Document( Created_atMixin, Upated_atMixin, Base):
     __tablename__ = 'document'
     __table_args__ = {'schema': 'volunteer'}
 
@@ -177,8 +183,6 @@ class Document(Base):
     volunteer_id = Column(Integer, ForeignKey('volunteer.id'), nullable=False, index=True)
     doc_type = Column( Enum( document_type), nullable=False, index=True)
     doc_status = Column( Enum( document_status), nullable=False)
-    created = Column(DateTime, default=datetime.now, nullable=False, index=True)
-    updated = Column(DateTime, default=datetime.now, nullable=False, index=True)
 
     # Relaciones
     volunteer = relationship('Volunteer', foreign_keys=[volunteer_id])
@@ -189,11 +193,11 @@ class Document(Base):
             'volunteer_id': self.volunteer_id,
             'doc_type': self.doc_type,
             'doc_status': self.doc_status,
-            'created': self.created,
-            'updated': self.updated,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at,
         }
 
-class Material(Base):
+class Material(Created_atMixin, Upated_atMixin, Base):
     __tablename__ = 'material'
     __table_args__ = {'schema': 'volunteer'}
 
@@ -201,8 +205,6 @@ class Material(Base):
     volunteer_id = Column(Integer, ForeignKey('volunteer.id'), nullable=False, index=True)
     material_type = Column( Enum( material_type), nullable=False, index=True)
     material_status = Column( Enum( material_status), nullable=False)
-    created = Column(DateTime, default=datetime.now, nullable=False, index=True)
-    updated = Column(DateTime, default=datetime.now, nullable=False, index=True)
 
     # Relaciones
     volunteer = relationship('Volunteer', foreign_keys=[volunteer_id])
@@ -213,11 +215,11 @@ class Material(Base):
             'volunteer_id': self.volunteer_id,
             'material_type': self.material_type,
             'material_status': self.material_status,
-            'created': self.created,
-            'updated': self.updated,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at,
         }
 
-class Meeting(Base):
+class Meeting(Created_atMixin, Upated_atMixin, Base):
     __tablename__ = 'meeting'
     __table_args__ = {'schema': 'volunteer'}
 
@@ -225,8 +227,6 @@ class Meeting(Base):
     volunteer_id = Column(Integer, ForeignKey('volunteer.id'), nullable=False, index=True)
     meeting_type = Column( Enum( meeting_type), nullable=False, index=True)
     meeting_status = Column( Enum( meeting_status), nullable=False)
-    created = Column(DateTime, default=datetime.now, nullable=False, index=True)
-    updated = Column(DateTime, default=datetime.now, nullable=False, index=True)
 
     # Relaciones
     volunteer = relationship('Volunteer', foreign_keys=[volunteer_id])
@@ -237,11 +237,11 @@ class Meeting(Base):
             'volunteer_id': self.volunteer_id,
             'meeting_type': self.meeting_type,
             'meeting_status': self.meeting_status,
-            'created': self.created,
-            'updated': self.updated,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at,
         }
 
-class Volunteer(Base):
+class Volunteer(Created_atMixin, Upated_atMixin, Base):
     __tablename__ = 'volunteer'
     __table_args__ = {'schema': 'volunteer'}
 
@@ -256,8 +256,6 @@ class Volunteer(Base):
     occupacion = Column(String(100))
     joined = Column(DateTime, default=datetime.now, nullable=False)
     status = Column( Enum( status), nullable=False)
-    created = Column(DateTime, default=datetime.now, nullable=False, index=True)
-    updated = Column(DateTime, default=datetime.now, nullable=False, index=True)
 
     def to_dict(self):
         return {
@@ -272,11 +270,11 @@ class Volunteer(Base):
             'occupacion': self.occupacion,
             'joined': self.joined,
             'status': self.status,
-            'created': self.created,
-            'updated': self.updated,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at,
         }
 
-class Full_volunteer_overview(Base):
+class Full_volunteer_overview(Created_atMixin, Upated_atMixin, Base):
     __tablename__ = 'full_volunteer_overview'
     __table_args__ = {'schema': 'volunteer'}
 
@@ -291,8 +289,6 @@ class Full_volunteer_overview(Base):
     occupacion = Column(String(100))
     joined = Column(DateTime, default=datetime.now, nullable=False)
     status = Column( Enum( status), nullable=False)
-    created = Column(DateTime, default=datetime.now, nullable=False, index=True)
-    updated = Column(DateTime, default=datetime.now, nullable=False, index=True)
     call = Column( Enum( meeting_status), nullable=False)
     interest = Column( Enum( meeting_status), nullable=False)
     interview_planning = Column( Enum( meeting_status), nullable=False)
@@ -334,8 +330,8 @@ class Full_volunteer_overview(Base):
             'occupacion': self.occupacion,
             'joined': self.joined,
             'status': self.status,
-            'created': self.created,
-            'updated': self.updated,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at,
             'call': self.call,
             'interest': self.interest,
             'interview_planning': self.interview_planning,
@@ -365,7 +361,7 @@ class Full_volunteer_overview(Base):
             'badge': self.badge,
         }
 
-class Volunteer_document_overview(Base):
+class Volunteer_document_overview(Created_atMixin, Upated_atMixin, Base):
     __tablename__ = 'volunteer_document_overview'
     __table_args__ = {'schema': 'volunteer'}
 
@@ -416,7 +412,7 @@ class Volunteer_document_overview(Base):
             'fotos_physical': self.fotos_physical,
         }
 
-class Volunteer_material_overview(Base):
+class Volunteer_material_overview(Created_atMixin, Upated_atMixin, Base):
     __tablename__ = 'volunteer_material_overview'
     __table_args__ = {'schema': 'volunteer'}
 
@@ -431,7 +427,7 @@ class Volunteer_material_overview(Base):
             'badge': self.badge,
         }
 
-class Volunteer_meeting_overview(Base):
+class Volunteer_meeting_overview(Created_atMixin, Upated_atMixin, Base):
     __tablename__ = 'volunteer_meeting_overview'
     __table_args__ = {'schema': 'volunteer'}
 

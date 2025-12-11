@@ -133,8 +133,8 @@ CREATE TABLE IF NOT EXISTS volunteer.volunteer
     occupacion TEXT,
     joined     DATE,
     status     volunteer.status DEFAULT 'inactive'::volunteer.status,
-    created    TIMESTAMP        DEFAULT NOW(),
-    updated    TIMESTAMP        DEFAULT NOW()
+    created_at    TIMESTAMP        DEFAULT NOW(),
+    updated_at    TIMESTAMP        DEFAULT NOW()
 );
 COMMENT ON TABLE volunteer.volunteer IS $comment$Volunteer personal data$comment$;
 
@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS volunteer.area
 (
     id SERIAL PRIMARY KEY,
     name ENUM( 'administracion', 'bazar', 'cocina', 'lactantes', 'mantenimiento', 'maternal', 'preescolar', 'procuracion'),
-    created TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT NOW()
 );*/
 
 DROP TABLE IF EXISTS volunteer.volunteer_area_lookup;
@@ -154,8 +154,8 @@ CREATE TABLE IF NOT EXISTS volunteer.volunteer_area_lookup
     area_id      volunteer.area NOT NULL,
     start_date   DATE           NOT NULL,
     end_date     DATE           NOT NULL,
-    created      TIMESTAMP DEFAULT NOW(),
-    updated      TIMESTAMP DEFAULT NOW()
+    created_at      TIMESTAMP DEFAULT NOW(),
+    updated_at      TIMESTAMP DEFAULT NOW()
 );
 COMMENT ON TABLE volunteer.volunteer_area_lookup IS $comment$Volunteer area affectation$comment$;
 
@@ -166,8 +166,8 @@ CREATE TABLE IF NOT EXISTS volunteer.work_plan
     day        volunteer.workday NOT NULL,
     hour_start TEXT,
     hour_end   TEXT,
-    created    TIMESTAMP DEFAULT NOW(),
-    updated    TIMESTAMP DEFAULT NOW()
+    created_at    TIMESTAMP DEFAULT NOW(),
+    updated_at    TIMESTAMP DEFAULT NOW()
 );
 COMMENT ON TABLE volunteer.work_plan IS $comment$Volunteer work planing$comment$;
 
@@ -178,8 +178,8 @@ CREATE TABLE IF NOT EXISTS volunteer.document
     volunteer_id INT REFERENCES volunteer.volunteer (id),
     doc_type     volunteer.document_type NOT NULL,
     doc_status   volunteer.document_status DEFAULT 'pending'::volunteer.document_status,
-    created      TIMESTAMP                 DEFAULT NOW(),
-    updated      TIMESTAMP                 DEFAULT NOW()
+    created_at      TIMESTAMP                 DEFAULT NOW(),
+    updated_at      TIMESTAMP                 DEFAULT NOW()
 
 );
 COMMENT ON TABLE volunteer.document IS $comment$Volunteer mandatory documents$comment$;
@@ -191,8 +191,8 @@ CREATE TABLE IF NOT EXISTS volunteer.meeting
     volunteer_id   INT REFERENCES volunteer.volunteer (id),
     meeting_type   volunteer.meeting_type   DEFAULT 'interest'::volunteer.meeting_type,
     meeting_status volunteer.meeting_status DEFAULT 'pending'::volunteer.meeting_status,
-    created        TIMESTAMP                DEFAULT NOW(),
-    updated        TIMESTAMP                DEFAULT NOW()
+    created_at        TIMESTAMP                DEFAULT NOW(),
+    updated_at        TIMESTAMP                DEFAULT NOW()
 );
 COMMENT ON TABLE volunteer.meeting IS $comment$Volunteer recruitments meetings$comment$;
 
@@ -203,8 +203,8 @@ CREATE TABLE IF NOT EXISTS volunteer.material
     volunteer_id    INT REFERENCES volunteer.volunteer (id),
     material_type   volunteer.material_type   DEFAULT 'badge'::volunteer.material_type,
     material_status volunteer.material_status DEFAULT 'pending'::volunteer.material_status,
-    created         TIMESTAMP                 DEFAULT NOW(),
-    updated         TIMESTAMP                 DEFAULT NOW()
+    created_at         TIMESTAMP                 DEFAULT NOW(),
+    updated_at         TIMESTAMP                 DEFAULT NOW()
 );
 COMMENT ON TABLE volunteer.material IS $comment$Volunteer personal data$comment$;
 
