@@ -1,6 +1,5 @@
 CREATE EXTENSION IF NOT EXISTS tablefunc;
 
-
 --
 -- Volunteer schema creation
 --
@@ -25,8 +24,15 @@ CREATE TYPE volunteer.status AS ENUM (
     );
 COMMENT ON TYPE volunteer.status IS $comment$Volunteer status$comment$;
 
-DROP TYPE IF EXISTS volunteer.area CASCADE;
-CREATE TYPE volunteer.area AS ENUM (
+DROP TYPE IF EXISTS volunteer.timesheet_status CASCADE;
+CREATE TYPE volunteer.timesheet_status AS ENUM (
+    'active',
+    'inactive'
+    );
+COMMENT ON TYPE volunteer.timesheet_status IS $comment$Volunteer timesheet_status$comment$;
+
+DROP TYPE IF EXISTS volunteer.area_name CASCADE;
+CREATE TYPE volunteer.area_name AS ENUM (
     'administracion',
     'bazar',
     'cocina',
@@ -36,7 +42,7 @@ CREATE TYPE volunteer.area AS ENUM (
     'preescolar',
     'procuracion'
     );
-COMMENT ON TYPE volunteer.area IS $comment$Volunteer area$comment$;
+COMMENT ON TYPE volunteer.area_name IS $comment$Volunteer area_name$comment$;
 
 DROP TYPE IF EXISTS volunteer.workday CASCADE;
 CREATE TYPE volunteer.workday AS ENUM (
@@ -138,39 +144,6 @@ CREATE TABLE IF NOT EXISTS volunteer.volunteer
     updated_at    TIMESTAMP        DEFAULT NOW()
 );
 COMMENT ON TABLE volunteer.volunteer IS $comment$Volunteer personal data$comment$;
-
-/*DROP TABLE IF EXISTS volunteer.area;
-CREATE TABLE IF NOT EXISTS volunteer.area
-(
-    id SERIAL PRIMARY KEY,
-    name ENUM( 'administracion', 'bazar', 'cocina', 'lactantes', 'mantenimiento', 'maternal', 'preescolar', 'procuracion'),
-    created_at TIMESTAMP DEFAULT NOW()
-);*/
-
-DROP TABLE IF EXISTS volunteer.volunteer_area_lookup;
-CREATE TABLE IF NOT EXISTS volunteer.volunteer_area_lookup
-(
-    id           SERIAL PRIMARY KEY,
-    volunteer_id INT REFERENCES volunteer.volunteer (id),
-    area_id      volunteer.area NOT NULL,
-    start_date   DATE           NOT NULL,
-    end_date     DATE           NOT NULL,
-    created_at      TIMESTAMP DEFAULT NOW(),
-    updated_at      TIMESTAMP DEFAULT NOW()
-);
-COMMENT ON TABLE volunteer.volunteer_area_lookup IS $comment$Volunteer area affectation$comment$;
-
-DROP TABLE IF EXISTS volunteer.work_plan;
-CREATE TABLE IF NOT EXISTS volunteer.work_plan
-(
-    id         SERIAL PRIMARY KEY,
-    day        volunteer.workday NOT NULL,
-    hour_start TEXT,
-    hour_end   TEXT,
-    created_at    TIMESTAMP DEFAULT NOW(),
-    updated_at    TIMESTAMP DEFAULT NOW()
-);
-COMMENT ON TABLE volunteer.work_plan IS $comment$Volunteer work planing$comment$;
 
 DROP TABLE IF EXISTS volunteer.document;
 CREATE TABLE IF NOT EXISTS volunteer.document
@@ -472,10 +445,165 @@ VALUES
     ('josepabloha3@live.com.mx', 'Jose Pablo3', 'Hernández Alono3', TO_DATE('01-01-1995', 'DD-MM-YYYY'),
      'hombre'::volunteer.GENDER, '0000000003', 'estudiante', NOW());
 
-
-
 INSERT INTO volunteer.volunteer (email, name, surname, birthdate, gender, phone, occupacion, joined)
 VALUES
     ('josepabloha4@live.com.mx', 'Jose Pablo4', 'Hernández Alono4', TO_DATE('01-01-1995', 'DD-MM-YYYY'),
      'hombre'::volunteer.GENDER, '0000000004', 'estudiante', NOW());
 
+--
+-- Workplan management
+--
+
+-- Area
+DROP TABLE IF EXISTS volunteer.area;
+CREATE TABLE IF NOT EXISTS volunteer.area
+(
+    id SERIAL PRIMARY KEY,
+    area_name volunteer.area_name NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Volunteer_area_lookup
+DROP TABLE IF EXISTS volunteer.volunteer_area_lookup;
+CREATE TABLE IF NOT EXISTS volunteer.volunteer_area_lookup
+(
+    id           SERIAL PRIMARY KEY,
+    volunteer_id INT REFERENCES volunteer.volunteer (id) NOT NULL,
+    area_id      INT REFERENCES volunteer.area (id) NOT NULL,
+    date_start   DATE DEFAULT CURRENT_DATE,
+    date_end     DATE,
+    created_at      TIMESTAMP DEFAULT NOW(),
+    updated_at      TIMESTAMP DEFAULT NOW()
+);
+COMMENT ON TABLE volunteer.volunteer_area_lookup IS $comment$Volunteer area affectation$comment$;
+
+-- Timesheet
+DROP TABLE IF EXISTS volunteer.timesheet;
+CREATE TABLE IF NOT EXISTS volunteer.timesheet
+(
+    id           SERIAL PRIMARY KEY,
+    volunteer_id INT     NOT NULL REFERENCES volunteer.volunteer (id),
+    area_id      INT     NOT NULL REFERENCES volunteer.area (id),
+    status       volunteer.timesheet_status NOT NULL DEFAULT 'active'::volunteer.timesheet_status,
+    date_start   DATE DEFAULT CURRENT_DATE,
+    date_end     DATE,
+    description  TEXT,
+    created_at   TIMESTAMP        DEFAULT NOW(),
+    updated_at   TIMESTAMP        DEFAULT NOW()
+);
+COMMENT ON TABLE volunteer.timesheet IS $comment$Volunteer weekly timesheet$comment$;
+
+-- Timesheet detail
+DROP TABLE IF EXISTS volunteer.timesheet_detail;
+CREATE TABLE IF NOT EXISTS volunteer.timesheet_detail
+(
+    id           SERIAL PRIMARY KEY,
+    timesheet_id INT                        NOT NULL,
+    workday      volunteer.workday          NOT NULL,
+    hour_start   TIME                       NOT NULL,
+    hour_end     TIME                       NOT NULL,
+    created_at   TIMESTAMP                           DEFAULT NOW(),
+    updated_at   TIMESTAMP                           DEFAULT NOW()
+);
+COMMENT ON TABLE volunteer.timesheet_detail IS $comment$Volunteer weekly timesheet details, list of start and end hours$comment$;
+
+-- Timesheet view creation
+CREATE OR REPLACE VIEW volunteer.volunteer_timesheet_overview AS
+SELECT
+    vv.name,
+    vv.surname,
+    vv.phone,
+    vt.description,
+    vt.date_start,
+    vt.date_end,
+    vtd.workday,
+    vtd.hour_start,
+    vtd.hour_end,
+    va.area_name
+FROM
+    volunteer.volunteer vv
+        LEFT JOIN volunteer.timesheet vt ON vv.id = vt.volunteer_id AND vt.status = 'active'::volunteer.timesheet_status
+        LEFT JOIN volunteer.timesheet_detail vtd  ON vt.id = vtd.timesheet_id
+        LEFT JOIN volunteer.area va ON vt.area_id = va.id;
+
+-- Dummy data insertion
+INSERT INTO volunteer.area( area_name)
+VALUES
+    ('administracion'::volunteer.area_name),
+    ('bazar'::volunteer.area_name),
+    ('cocina'::volunteer.area_name),
+    ('lactantes'::volunteer.area_name),
+    ('mantenimiento'::volunteer.area_name),
+    ('maternal'::volunteer.area_name),
+    ('preescolar'::volunteer.area_name),
+    ('procuracion'::volunteer.area_name);
+
+INSERT INTO volunteer.volunteer_area_lookup( volunteer_id, area_id)
+VALUES
+    ( (SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha@live.com.mx'), ( SELECT id FROM volunteer.area WHERE area_name = 'preescolar')),
+    ( (SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha2@live.com.mx'), ( SELECT id FROM volunteer.area WHERE area_name = 'maternal')),
+    ( (SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha3@live.com.mx'), ( SELECT id FROM volunteer.area WHERE area_name = 'lactantes'));
+
+INSERT INTO volunteer.timesheet(volunteer_id, area_id, status, date_start, description)
+VALUES
+    (
+        ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha@live.com.mx'),
+        ( SELECT id FROM volunteer.area WHERE area_name = 'preescolar'),
+        'active'::volunteer.timesheet_status,
+        CURRENT_DATE,
+        'Jose Pablo preescolar work planing'
+    ),
+    (
+        ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha2@live.com.mx'),
+        ( SELECT id FROM volunteer.area WHERE area_name = 'maternal'),
+        'active'::volunteer.timesheet_status,
+        CURRENT_DATE,
+        'Jose Pablo 2 maternal work planing'
+    ),
+    (
+        ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha3@live.com.mx'),
+        ( SELECT id FROM volunteer.area WHERE area_name = 'lactantes'),
+        'active'::volunteer.timesheet_status,
+        CURRENT_DATE,
+        'Jose Pablo 3 lactantes work planing'
+    );
+
+INSERT INTO volunteer.timesheet_detail( timesheet_id, workday, hour_start, hour_end)
+VALUES
+    (
+        ( SELECT id FROM volunteer.timesheet vt WHERE vt.status = 'active'::volunteer.timesheet_status AND vt.volunteer_id = ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha@live.com.mx') AND vt.area_id = ( SELECT id FROM volunteer.area WHERE area_name = 'preescolar')),
+        'monday'::volunteer.workday,
+        '1300'::time,
+        '1500'::time
+    ),
+    (
+        ( SELECT id FROM volunteer.timesheet vt WHERE vt.status = 'active'::volunteer.timesheet_status AND vt.volunteer_id = ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha@live.com.mx') AND vt.area_id = ( SELECT id FROM volunteer.area WHERE area_name = 'preescolar')),
+        'tuesday'::volunteer.workday,
+        '1600'::time,
+        '1800'::time
+    ),
+    (
+        ( SELECT id FROM volunteer.timesheet vt WHERE vt.status = 'active'::volunteer.timesheet_status AND vt.volunteer_id = ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha2@live.com.mx') AND vt.area_id = ( SELECT id FROM volunteer.area WHERE area_name = 'maternal')),
+        'wednesday'::volunteer.workday,
+        '1000'::time,
+        '1200'::time
+    ),
+    (
+        ( SELECT id FROM volunteer.timesheet vt WHERE vt.status = 'active'::volunteer.timesheet_status AND vt.volunteer_id = ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha2@live.com.mx') AND vt.area_id = ( SELECT id FROM volunteer.area WHERE area_name = 'maternal')),
+        'thursday'::volunteer.workday,
+        '1430'::time,
+        '1730'::time
+    ),
+    (
+        ( SELECT id FROM volunteer.timesheet vt WHERE vt.status = 'active'::volunteer.timesheet_status AND vt.volunteer_id = ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha3@live.com.mx') AND vt.area_id = ( SELECT id FROM volunteer.area WHERE area_name = 'lactantes')),
+        'friday'::volunteer.workday,
+        '1100'::time,
+        '1300'::time
+    ),
+    (
+        ( SELECT id FROM volunteer.timesheet vt WHERE vt.status = 'active'::volunteer.timesheet_status AND vt.volunteer_id = ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha3@live.com.mx') AND vt.area_id = ( SELECT id FROM volunteer.area WHERE area_name = 'lactantes')),
+        'friday'::volunteer.workday,
+        '1700'::time,
+        '2000'::time
+    );
