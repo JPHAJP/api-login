@@ -623,6 +623,104 @@ VALUES
         '2000'::time
     );
 
-
 REFRESH MATERIALIZED VIEW volunteer.volunteer_timesheet_overview;
 REFRESH MATERIALIZED VIEW volunteer.volunteer_recruitment_overview;
+
+-- Time tracking dummy data insertion
+INSERT INTO public.access_logs( user_id, qr_code_id, access_type, timestamp, is_manual)
+VALUES (
+        ( SELECT id FROM public.users pu WHERE pu.email = 'josepabloha@live.com.mx'),
+        ( SELECT id FROM qr_codes WHERE is_active = TRUE),
+        'ENTRY',
+    TO_TIMESTAMP('2025-11-03 13:00', 'YYYY-MM-DD HH:MM'),
+        FALSE),
+    (
+        ( SELECT id FROM public.users pu WHERE pu.email = 'josepabloha@live.com.mx'),
+        ( SELECT id FROM qr_codes WHERE is_active = TRUE),
+        'EXIT',
+        TO_TIMESTAMP('2025-11-03 15:00', 'YYYY-MM-DD HH:MM'),
+    FALSE),
+    (
+        ( SELECT id FROM public.users pu WHERE pu.email = 'josepabloha@live.com.mx'),
+        ( SELECT id FROM qr_codes WHERE is_active = TRUE),
+        'ENTRY',
+        TO_TIMESTAMP('2025-11-10 13:00', 'YYYY-MM-DD HH:MM'),
+    FALSE),
+    (
+        ( SELECT id FROM public.users pu WHERE pu.email = 'josepabloha@live.com.mx'),
+        ( SELECT id FROM qr_codes WHERE is_active = TRUE),
+        'EXIT',
+        TO_TIMESTAMP('2025-11-10 15:00', 'YYYY-MM-DD HH:MM'),
+    FALSE),
+    (
+        ( SELECT id FROM public.users pu WHERE pu.email = 'josepabloha@live.com.mx'),
+        ( SELECT id FROM qr_codes WHERE is_active = TRUE),
+        'ENTRY',
+        TO_TIMESTAMP('2025-11-17 13:00', 'YYYY-MM-DD HH:MM'),
+    FALSE),
+    (
+        ( SELECT id FROM public.users pu WHERE pu.email = 'josepabloha@live.com.mx'),
+        ( SELECT id FROM qr_codes WHERE is_active = TRUE),
+        'EXIT',
+        TO_TIMESTAMP('2025-11-17 15:00', 'YYYY-MM-DD HH:MM'),
+    FALSE),
+    (
+        ( SELECT id FROM public.users pu WHERE pu.email = 'josepabloha@live.com.mx'),
+        ( SELECT id FROM qr_codes WHERE is_active = TRUE),
+        'ENTRY',
+        TO_TIMESTAMP('2025-11-24 13:00', 'YYYY-MM-DD HH:MM'),
+    FALSE),
+    (
+        ( SELECT id FROM public.users pu WHERE pu.email = 'josepabloha@live.com.mx'),
+        ( SELECT id FROM qr_codes WHERE is_active = TRUE),
+        'EXIT',
+        TO_TIMESTAMP('2025-11-24 15:00', 'YYYY-MM-DD HH:MM'),
+    FALSE),
+    (
+        ( SELECT id FROM public.users pu WHERE pu.email = 'josepabloha@live.com.mx'),
+        ( SELECT id FROM qr_codes WHERE is_active = TRUE),
+        'ENTRY',
+        TO_TIMESTAMP('2025-11-04 16:00', 'YYYY-MM-DD HH:MM'),
+    FALSE),
+    (
+        ( SELECT id FROM public.users pu WHERE pu.email = 'josepabloha@live.com.mx'),
+        ( SELECT id FROM qr_codes WHERE is_active = TRUE),
+        'EXIT',
+        TO_TIMESTAMP('2025-11-04 18:00', 'YYYY-MM-DD HH:MM'),
+    FALSE),
+    (
+        ( SELECT id FROM public.users pu WHERE pu.email = 'josepabloha@live.com.mx'),
+        ( SELECT id FROM qr_codes WHERE is_active = TRUE),
+        'ENTRY',
+        TO_TIMESTAMP('2025-11-11 16:00', 'YYYY-MM-DD HH:MM'),
+    FALSE),
+    (
+        ( SELECT id FROM public.users pu WHERE pu.email = 'josepabloha@live.com.mx'),
+        ( SELECT id FROM qr_codes WHERE is_active = TRUE),
+        'EXIT',
+        TO_TIMESTAMP('2025-11-11 18:00', 'YYYY-MM-DD HH:MM'),
+    FALSE),
+    (
+        ( SELECT id FROM public.users pu WHERE pu.email = 'josepabloha@live.com.mx'),
+        ( SELECT id FROM qr_codes WHERE is_active = TRUE),
+        'ENTRY',
+        TO_TIMESTAMP('2025-11-18 16:00', 'YYYY-MM-DD HH:MM'),
+    FALSE),
+    (
+        ( SELECT id FROM public.users pu WHERE pu.email = 'josepabloha@live.com.mx'),
+        ( SELECT id FROM qr_codes WHERE is_active = TRUE),
+        'EXIT',
+        TO_TIMESTAMP('2025-11-18 18:00', 'YYYY-MM-DD HH:MM'),
+    FALSE),
+    (
+        ( SELECT id FROM public.users pu WHERE pu.email = 'josepabloha@live.com.mx'),
+        ( SELECT id FROM qr_codes WHERE is_active = TRUE),
+        'ENTRY',
+        TO_TIMESTAMP('2025-11-25 16:00', 'YYYY-MM-DD HH:MM'),
+    FALSE),
+    (
+        ( SELECT id FROM public.users pu WHERE pu.email = 'josepabloha@live.com.mx'),
+        ( SELECT id FROM qr_codes WHERE is_active = TRUE),
+        'EXIT',
+        TO_TIMESTAMP('2025-11-25 18:00', 'YYYY-MM-DD HH:MM'),
+FALSE);
