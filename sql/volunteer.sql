@@ -342,7 +342,7 @@ FROM CROSSTAB(
 COMMENT ON VIEW volunteer.volunteer_meeting_overview IS $comment$Volunteer meeting status overview$comment$;
 
 -- Full volunteer data overview
-CREATE MATERIALIZED VIEW volunteer.full_volunteer_overview AS
+CREATE MATERIALIZED VIEW volunteer.volunteer_recruitment_overview AS
 SELECT
     vv.id,
     vv.email,
@@ -389,13 +389,13 @@ FROM
         LEFT JOIN volunteer.volunteer_meeting_overview vv_meeting_o ON vv.id = vv_meeting_o.volunteer_id
         LEFT JOIN volunteer.volunteer_document_overview vvdo ON vv.id = vvdo.volunteer_id
         LEFT JOIN volunteer.volunteer_material_overview vv_mat_o ON vv.id = vv_mat_o.volunteer_id;
-COMMENT ON VIEW volunteer.volunteer_meeting_overview IS $comment$Volunteer meeting status overview$comment$;
+COMMENT ON MATERIALIZED VIEW volunteer.volunteer_recruitment_overview IS $comment$Volunteer recruitment full overview$comment$;
 
 -- Full overview refresh triggers definitions
 CREATE OR REPLACE FUNCTION volunteer.refresh_volunteer_matview()
     RETURNS TRIGGER AS $$
 BEGIN
-    REFRESH MATERIALIZED VIEW volunteer.full_volunteer_overview;
+    REFRESH MATERIALIZED VIEW volunteer.volunteer_recruitment_overview;
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
@@ -484,7 +484,6 @@ CREATE TABLE IF NOT EXISTS volunteer.timesheet
 (
     id           SERIAL PRIMARY KEY,
     volunteer_id INT     NOT NULL REFERENCES volunteer.volunteer (id),
-    area_id      INT     NOT NULL REFERENCES volunteer.area (id),
     status       volunteer.timesheet_status NOT NULL DEFAULT 'active'::volunteer.timesheet_status,
     date_start   DATE DEFAULT CURRENT_DATE,
     date_end     DATE,
@@ -508,24 +507,42 @@ CREATE TABLE IF NOT EXISTS volunteer.timesheet_detail
 );
 COMMENT ON TABLE volunteer.timesheet_detail IS $comment$Volunteer weekly timesheet details, list of start and end hours$comment$;
 
+;
+
 -- Timesheet view creation
-CREATE OR REPLACE VIEW volunteer.volunteer_timesheet_overview AS
-SELECT
+CREATE MATERIALIZED VIEW volunteer.volunteer_timesheet_overview AS
+WITH volunteer_area_affectation AS (SELECT vval.volunteer_id,
+                                           STRING_AGG(va.area_name::TEXT, ', ' ORDER BY va.area_name ASC) AS volunteer_areas
+                                    FROM volunteer.volunteer_area_lookup vval
+                                             LEFT JOIN volunteer.area va ON vval.area_id = va.id
+                                    GROUP BY vval.volunteer_id),
+     volunteer_timesheet_summary AS (SELECT vt.volunteer_id,
+                                            STRING_AGG(INITCAP( vtd.workday::TEXT) || ': ' ||
+                                                       TO_CHAR( vtd.hour_start, 'HH24:MI')::TEXT || '-' ||
+                                                       TO_CHAR( vtd.hour_end, 'HH24:MI')::TEXT ||
+                                                       ' (' || TO_CHAR( (EXTRACT(epoch FROM vtd.hour_end - vtd.hour_start) / 3600 * INTERVAL '1 hour')::INTERVAL, 'HH24::MI') || ')', ', '
+                                                       ORDER BY vtd.workday::TEXT ASC) AS working_timeslots,
+                                            EXTRACT(epoch FROM SUM( vtd.hour_end - vtd.hour_start)) / 3600 AS weekly_hours
+                                     FROM volunteer.timesheet vt
+                                              LEFT JOIN volunteer.timesheet_detail vtd ON vt.id = vtd.timesheet_id
+                                     GROUP BY vt.volunteer_id)
+ SELECT
     vv.name,
     vv.surname,
-    vv.phone,
     vt.description,
     vt.date_start,
     vt.date_end,
-    vtd.workday,
-    vtd.hour_start,
-    vtd.hour_end,
-    va.area_name
+    vaa.volunteer_areas,
+    vts.working_timeslots,
+    vts.weekly_hours
 FROM
     volunteer.volunteer vv
         LEFT JOIN volunteer.timesheet vt ON vv.id = vt.volunteer_id AND vt.status = 'active'::volunteer.timesheet_status
-        LEFT JOIN volunteer.timesheet_detail vtd  ON vt.id = vtd.timesheet_id
-        LEFT JOIN volunteer.area va ON vt.area_id = va.id;
+        LEFT JOIN volunteer_area_affectation vaa ON vv.id = vaa.volunteer_id
+        LEFT JOIN volunteer_timesheet_summary vts ON vv.id = vts.volunteer_id;
+COMMENT ON MATERIALIZED VIEW volunteer.volunteer_timesheet_overview IS $comment$Volunteer working times overview$comment$;
+
+-- Timesheet display resource: https://www.jqueryscript.net/time-clock/pretty-weekly-event-calendar.html
 
 -- Dummy data insertion
 INSERT INTO volunteer.area( area_name)
@@ -542,68 +559,70 @@ VALUES
 INSERT INTO volunteer.volunteer_area_lookup( volunteer_id, area_id)
 VALUES
     ( (SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha@live.com.mx'), ( SELECT id FROM volunteer.area WHERE area_name = 'preescolar')),
+    ( (SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha@live.com.mx'), ( SELECT id FROM volunteer.area WHERE area_name = 'maternal')),
     ( (SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha2@live.com.mx'), ( SELECT id FROM volunteer.area WHERE area_name = 'maternal')),
     ( (SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha3@live.com.mx'), ( SELECT id FROM volunteer.area WHERE area_name = 'lactantes'));
 
-INSERT INTO volunteer.timesheet(volunteer_id, area_id, status, date_start, description)
+INSERT INTO volunteer.timesheet(volunteer_id, status, date_start, description)
 VALUES
     (
         ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha@live.com.mx'),
-        ( SELECT id FROM volunteer.area WHERE area_name = 'preescolar'),
         'active'::volunteer.timesheet_status,
         CURRENT_DATE,
-        'Jose Pablo preescolar work planing'
+        'Jose Pablo work planing'
     ),
     (
         ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha2@live.com.mx'),
-        ( SELECT id FROM volunteer.area WHERE area_name = 'maternal'),
         'active'::volunteer.timesheet_status,
         CURRENT_DATE,
-        'Jose Pablo 2 maternal work planing'
+        'Jose Pablo 2 work planing'
     ),
     (
         ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha3@live.com.mx'),
-        ( SELECT id FROM volunteer.area WHERE area_name = 'lactantes'),
         'active'::volunteer.timesheet_status,
         CURRENT_DATE,
-        'Jose Pablo 3 lactantes work planing'
+        'Jose Pablo 3 work planing'
     );
 
 INSERT INTO volunteer.timesheet_detail( timesheet_id, workday, hour_start, hour_end)
 VALUES
     (
-        ( SELECT id FROM volunteer.timesheet vt WHERE vt.status = 'active'::volunteer.timesheet_status AND vt.volunteer_id = ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha@live.com.mx') AND vt.area_id = ( SELECT id FROM volunteer.area WHERE area_name = 'preescolar')),
+        ( SELECT id FROM volunteer.timesheet vt WHERE vt.status = 'active'::volunteer.timesheet_status AND vt.volunteer_id = ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha@live.com.mx')),
         'monday'::volunteer.workday,
         '1300'::time,
         '1500'::time
     ),
     (
-        ( SELECT id FROM volunteer.timesheet vt WHERE vt.status = 'active'::volunteer.timesheet_status AND vt.volunteer_id = ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha@live.com.mx') AND vt.area_id = ( SELECT id FROM volunteer.area WHERE area_name = 'preescolar')),
+        ( SELECT id FROM volunteer.timesheet vt WHERE vt.status = 'active'::volunteer.timesheet_status AND vt.volunteer_id = ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha@live.com.mx')),
         'tuesday'::volunteer.workday,
         '1600'::time,
         '1800'::time
     ),
     (
-        ( SELECT id FROM volunteer.timesheet vt WHERE vt.status = 'active'::volunteer.timesheet_status AND vt.volunteer_id = ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha2@live.com.mx') AND vt.area_id = ( SELECT id FROM volunteer.area WHERE area_name = 'maternal')),
+        ( SELECT id FROM volunteer.timesheet vt WHERE vt.status = 'active'::volunteer.timesheet_status AND vt.volunteer_id = ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha2@live.com.mx')),
         'wednesday'::volunteer.workday,
         '1000'::time,
         '1200'::time
     ),
     (
-        ( SELECT id FROM volunteer.timesheet vt WHERE vt.status = 'active'::volunteer.timesheet_status AND vt.volunteer_id = ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha2@live.com.mx') AND vt.area_id = ( SELECT id FROM volunteer.area WHERE area_name = 'maternal')),
+        ( SELECT id FROM volunteer.timesheet vt WHERE vt.status = 'active'::volunteer.timesheet_status AND vt.volunteer_id = ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha2@live.com.mx')),
         'thursday'::volunteer.workday,
         '1430'::time,
-        '1730'::time
+        '1800'::time
     ),
     (
-        ( SELECT id FROM volunteer.timesheet vt WHERE vt.status = 'active'::volunteer.timesheet_status AND vt.volunteer_id = ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha3@live.com.mx') AND vt.area_id = ( SELECT id FROM volunteer.area WHERE area_name = 'lactantes')),
+        ( SELECT id FROM volunteer.timesheet vt WHERE vt.status = 'active'::volunteer.timesheet_status AND vt.volunteer_id = ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha3@live.com.mx')),
         'friday'::volunteer.workday,
         '1100'::time,
         '1300'::time
     ),
     (
-        ( SELECT id FROM volunteer.timesheet vt WHERE vt.status = 'active'::volunteer.timesheet_status AND vt.volunteer_id = ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha3@live.com.mx') AND vt.area_id = ( SELECT id FROM volunteer.area WHERE area_name = 'lactantes')),
+        ( SELECT id FROM volunteer.timesheet vt WHERE vt.status = 'active'::volunteer.timesheet_status AND vt.volunteer_id = ( SELECT id FROM volunteer.volunteer WHERE email = 'josepabloha3@live.com.mx')),
         'friday'::volunteer.workday,
         '1700'::time,
         '2000'::time
     );
+
+
+REFRESH MATERIALIZED VIEW volunteer.volunteer_timesheet_overview;
+REFRESH MATERIALIZED VIEW volunteer.volunteer_recruitment_overview;
