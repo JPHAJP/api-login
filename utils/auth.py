@@ -11,12 +11,7 @@ from jose import JWTError, jwt
 
 from database import get_db
 from models import User
-
-# Configuración JWT
-SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'super-secret')
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv('ACCESS_TOKEN_EXPIRES', 15))
-REFRESH_TOKEN_EXPIRE_DAYS = int(os.getenv('REFRESH_TOKEN_EXPIRES_DAYS', 7))
+from config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS
 
 # Configuración de archivos
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}

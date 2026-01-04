@@ -12,7 +12,21 @@ from datetime import datetime
 
 router = APIRouter(tags=["Usuario"])
 
-@router.get("/profile", response_model=UserResponse)
+@router.get(
+    "/profile",
+    response_model=UserResponse,
+    summary="Obtener perfil del usuario actual",
+    description="""
+    Obtiene la información completa del perfil del usuario autenticado.
+    
+    **Requiere autenticación.**
+    
+    **Respuesta:**
+    - Información personal del usuario
+    - Estado de autorización
+    - Fechas de creación, autorización y desautorización (si aplica)
+    """
+)
 async def get_profile(current_user: User = Depends(get_current_user)):
     return UserResponse(
         id=current_user.id,
@@ -31,7 +45,24 @@ async def get_profile(current_user: User = Depends(get_current_user)):
         unauthorized_at=current_user.unauthorized_at
     )
 
-@router.get("/qr/current", response_model=QRCodeGenerate)
+@router.get(
+    "/qr/current",
+    response_model=QRCodeGenerate,
+    summary="Obtener código QR actual (Admin)",
+    description="""
+    Obtiene el código QR actual válido - Solo para administradores.
+    
+    **Requiere autenticación con rol de administrador.**
+    
+    **Nota:** Existe un endpoint público `/qr/current` (fuera de las rutas de usuario/admin) 
+    que puede ser usado sin autenticación para mostrar el QR en dispositivos públicos.
+    
+    **Respuesta:**
+    - `qr_image`: Imagen del QR en formato base64 (PNG)
+    - `code`: Código único del QR
+    - `expires_at`: Fecha y hora de expiración del QR
+    """
+)
 async def get_current_qr(
     admin_user: User = Depends(get_admin_user),
     db: Session = Depends(get_db)
@@ -53,7 +84,28 @@ async def get_current_qr(
             detail="Error al generar código QR"
         )
 
-@router.post("/qr/scan")
+@router.post(
+    "/qr/scan",
+    summary="Escanear código QR para entrada/salida",
+    description="""
+    Escanea un código QR para registrar entrada o salida - Solo para usuarios autorizados.
+    
+    **Requiere autenticación de usuario autorizado.**
+    
+    **Validaciones:**
+    - El usuario debe estar autorizado (`authorization_status == "authorized"`)
+    - El código QR debe ser válido y no estar expirado
+    - Para entrada: El usuario no debe tener una entrada sin salida correspondiente
+    - Para salida: El usuario debe tener una entrada registrada sin salida
+    
+    **Parámetros:**
+    - `qr_code`: El código escaneado del QR
+    - `access_type`: "entry" para entrada, "exit" para salida
+    
+    **Respuesta:**
+    - Confirmación del registro con detalles del acceso
+    """
+)
 async def scan_qr_code(
     scan_request: QRScanRequest,
     current_user: User = Depends(get_current_user),
