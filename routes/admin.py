@@ -13,13 +13,18 @@ from schemas import (
     AdminStats, UserDetailedResponse, UserSearchResponse, UserCurrentlyInside,
     ManualExitRequest, AccessLogStats, AccessLogResponse, UserAuthorizationResponse,
     UserDeletionCheckResponse, UnauthorizeUserRequest, AdminChangePasswordRequest,
-    AdminChangePasswordResponse
+    AdminChangePasswordResponse, SecurityLogsListResponse, SecurityLogResponse,
+    UserWithFailedLoginsResponse
 )
 from utils.auth import get_admin_user
 from utils.qr import get_or_create_current_qr
 from utils.rate_limit import limiter
 from utils.file_encryption import decrypt_file_content
 from utils.password_validator import PasswordValidator
+from utils.security_logger import (
+    log_password_changed, log_user_authorized, log_user_unauthorized, log_user_reauthorized,
+    get_security_logs, get_users_with_failed_logins
+)
 
 router = APIRouter(prefix="/admin", tags=["Administración"])
 
@@ -100,6 +105,9 @@ async def authorize_user(
     user.authorized_by_id = admin_user.id
     user.unauthorized_at = None  # Limpiar fecha de desautorización si existía
     user.unauthorized_by_id = None
+    
+    # Registrar el evento de seguridad
+    log_user_authorized(db, user, admin_user)
     
     db.commit()
     
@@ -256,6 +264,9 @@ async def unauthorize_user(
     user.unauthorized_by_id = admin_user.id
     # Mantener authorized_at para historial
     
+    # Registrar el evento de seguridad
+    log_user_unauthorized(db, user, admin_user, reason=unauthorize_request.reason)
+    
     db.commit()
     db.refresh(user)
     
@@ -332,6 +343,9 @@ async def reauthorize_user(
     user.authorized_by_id = admin_user.id
     user.unauthorized_at = None  # Limpiar fecha de desautorización
     user.unauthorized_by_id = None
+    
+    # Registrar el evento de seguridad
+    log_user_reauthorized(db, user, admin_user)
     
     db.commit()
     db.refresh(user)
@@ -413,6 +427,10 @@ async def admin_change_user_password(
     # Cambiar la contraseña
     try:
         target_user.set_password(password_request.new_password)
+        
+        # Registrar el evento de seguridad
+        log_password_changed(db, target_user, changed_by_admin=True, admin_user=admin_user)
+        
         db.commit()
         db.refresh(target_user)
         
@@ -855,3 +873,128 @@ async def get_user_identification_file(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error al acceder al archivo de identificación."
         )
+
+# ============================================================================
+# ENDPOINTS DE SEGURIDAD
+# ============================================================================
+
+@router.get('/security-logs', response_model=SecurityLogsListResponse)
+@limiter.limit("30/minute")
+async def get_security_logs_endpoint(
+    request: Request,
+    user_id: Optional[int] = None,
+    event_type: Optional[str] = None,
+    severity: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Obtiene los logs de seguridad del sistema con filtros opcionales.
+    
+    Filtros disponibles:
+    - user_id: Logs relacionados con un usuario específico
+    - event_type: Tipo de evento (failed_login, password_changed, etc.)
+    - severity: Nivel de severidad (info, warning, critical)
+    - limit: Número máximo de resultados (default: 100, max: 500)
+    - offset: Offset para paginación (default: 0)
+    """
+    # Limitar el máximo de resultados
+    limit = min(limit, 500)
+    
+    # Convertir event_type string a enum si se proporciona
+    from models import SecurityEventType
+    event_type_enum = None
+    if event_type:
+        try:
+            event_type_enum = SecurityEventType[event_type.upper()]
+        except KeyError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Tipo de evento inválido: {event_type}"
+            )
+    
+    # Obtener logs
+    result = get_security_logs(
+        db=db,
+        user_id=user_id,
+        event_type=event_type_enum,
+        severity=severity,
+        limit=limit,
+        offset=offset
+    )
+    
+    # Convertir a response models
+    logs_response = [SecurityLogResponse(**log) for log in result['logs']]
+    
+    return SecurityLogsListResponse(
+        logs=logs_response,
+        total=result['total'],
+        limit=result['limit'],
+        offset=result['offset']
+    )
+
+
+@router.get('/security-logs/failed-logins', response_model=List[UserWithFailedLoginsResponse])
+@limiter.limit("30/minute")
+async def get_users_with_failed_logins_endpoint(
+    request: Request,
+    min_attempts: int = 3,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Obtiene usuarios con múltiples intentos fallidos de login.
+    Útil para detectar posibles ataques o cuentas comprometidas.
+    
+    Parámetros:
+    - min_attempts: Número mínimo de intentos fallidos (default: 3)
+    """
+    users = get_users_with_failed_logins(db, min_attempts=min_attempts)
+    
+    return [UserWithFailedLoginsResponse(**user) for user in users]
+
+
+@router.post('/security-logs/unlock-account/{user_id}')
+@limiter.limit("10/minute")
+async def unlock_user_account(
+    request: Request,
+    user_id: int,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Desbloquea una cuenta de usuario que fue bloqueada por múltiples intentos fallidos.
+    """
+    from utils.security_logger import log_account_unlocked
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado."
+        )
+    
+    if not user.account_locked_until:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La cuenta no está bloqueada."
+        )
+    
+    # Desbloquear cuenta
+    user.account_locked_until = None
+    user.failed_login_attempts = 0
+    user.last_failed_login = None
+    
+    # Registrar el evento
+    log_account_unlocked(db, user, admin_user)
+    
+    db.commit()
+    
+    return {
+        "message": f"Cuenta desbloqueada exitosamente para {user.email}",
+        "user_id": user.id,
+        "user_email": user.email,
+        "unlocked_by": f"{admin_user.nombre_completo} {admin_user.apellidos}"
+    }

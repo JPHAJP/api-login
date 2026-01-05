@@ -13,6 +13,19 @@ class AccessType(enum.Enum):
     ENTRY = "entry"
     EXIT = "exit"
 
+class SecurityEventType(enum.Enum):
+    """Tipos de eventos de seguridad"""
+    FAILED_LOGIN = "failed_login"  # Intento fallido de login
+    SUCCESSFUL_LOGIN = "successful_login"  # Login exitoso (para contexto)
+    PASSWORD_CHANGED = "password_changed"  # Contraseña cambiada
+    PASSWORD_CHANGED_BY_ADMIN = "password_changed_by_admin"  # Admin cambió contraseña
+    USER_AUTHORIZED = "user_authorized"  # Usuario autorizado
+    USER_UNAUTHORIZED = "user_unauthorized"  # Usuario suspendido/desautorizado
+    USER_REAUTHORIZED = "user_reauthorized"  # Usuario reactivado
+    ACCOUNT_LOCKED = "account_locked"  # Cuenta bloqueada por intentos fallidos
+    ACCOUNT_UNLOCKED = "account_unlocked"  # Cuenta desbloqueada
+    SUSPICIOUS_ACTIVITY = "suspicious_activity"  # Actividad sospechosa
+
 class User(Base):
     __tablename__ = 'users'
     
@@ -34,6 +47,11 @@ class User(Base):
     unauthorized_at = Column(DateTime, nullable=True)  # Nueva fecha de desautorización
     authorized_by_id = Column(Integer, ForeignKey('users.id'), nullable=True)
     unauthorized_by_id = Column(Integer, ForeignKey('users.id'), nullable=True)  # Admin que desautorizó
+    
+    # Campos de seguridad
+    failed_login_attempts = Column(Integer, default=0, nullable=False)  # Contador de intentos fallidos
+    last_failed_login = Column(DateTime, nullable=True)  # Última vez que falló el login
+    account_locked_until = Column(DateTime, nullable=True)  # Bloqueo temporal de cuenta
     
     # Relación para saber qué admin autorizó al usuario
     authorized_by = relationship('User', remote_side=[id], back_populates='authorized_users', foreign_keys=[authorized_by_id])
@@ -167,3 +185,46 @@ class AccessLog(Base):
     
     def __repr__(self):
         return f"AccessLog(user_id={self.user_id}, type='{self.access_type.value}', timestamp='{self.timestamp}')"
+
+class SecurityLog(Base):
+    """
+    Log de eventos de seguridad del sistema.
+    Registra intentos fallidos de login, cambios de contraseña, suspensiones, etc.
+    """
+    __tablename__ = 'security_logs'
+    
+    id = Column(Integer, primary_key=True, index=True)
+    event_type = Column(Enum(SecurityEventType), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=True, index=True)  # Usuario afectado (puede ser null para eventos del sistema)
+    performed_by_id = Column(Integer, ForeignKey('users.id'), nullable=True)  # Usuario que realizó la acción (admin)
+    ip_address = Column(String(45), nullable=True)  # IPv4 o IPv6
+    user_agent = Column(String(500), nullable=True)  # Información del navegador/cliente
+    description = Column(Text, nullable=False)  # Descripción del evento
+    event_metadata = Column(Text, nullable=True)  # JSON con información adicional
+    severity = Column(String(20), default='info', nullable=False, index=True)  # info, warning, critical
+    timestamp = Column(DateTime, default=datetime.now, nullable=False, index=True)
+    
+    # Relaciones
+    user = relationship('User', foreign_keys=[user_id])
+    performed_by = relationship('User', foreign_keys=[performed_by_id])
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'event_type': self.event_type.value,
+            'user_id': self.user_id,
+            'user_email': self.user.email if self.user else None,
+            'user_name': f"{self.user.nombre_completo} {self.user.apellidos}" if self.user else None,
+            'performed_by_id': self.performed_by_id,
+            'performed_by_email': self.performed_by.email if self.performed_by else None,
+            'performed_by_name': f"{self.performed_by.nombre_completo} {self.performed_by.apellidos}" if self.performed_by else None,
+            'ip_address': self.ip_address,
+            'user_agent': self.user_agent,
+            'description': self.description,
+            'event_metadata': self.event_metadata,
+            'severity': self.severity,
+            'timestamp': self.timestamp.isoformat()
+        }
+    
+    def __repr__(self):
+        return f"SecurityLog(event='{self.event_type.value}', user_id={self.user_id}, severity='{self.severity}', timestamp='{self.timestamp}')"

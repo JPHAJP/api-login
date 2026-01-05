@@ -18,6 +18,10 @@ from utils.auth import (
 from utils.password_validator import PasswordValidator
 from utils.rate_limit import limiter
 from utils.file_encryption import encrypt_file_content
+from utils.security_logger import (
+    log_failed_login, log_successful_login, check_failed_login_attempts,
+    reset_failed_login_attempts
+)
 from config import (
     ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS, 
     UPLOAD_FOLDER, ALLOWED_EXTENSIONS
@@ -193,9 +197,19 @@ async def login(request: Request, user_credentials: UserLogin, db: Session = Dep
 
     user = db.query(User).filter(User.email == email).first()
     if not user:
+        # Registrar intento fallido con email que no existe
+        log_failed_login(db, request, email, reason="Usuario no existe")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Credenciales inválidas."
+        )
+    
+    # Verificar si la cuenta está bloqueada
+    if check_failed_login_attempts(db, request, user, max_attempts=5, lockout_duration_minutes=30):
+        remaining_time = (user.account_locked_until - datetime.now()).seconds // 60
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Cuenta bloqueada temporalmente por múltiples intentos fallidos. Intenta nuevamente en {remaining_time} minutos."
         )
     
     try:
@@ -207,10 +221,27 @@ async def login(request: Request, user_credentials: UserLogin, db: Session = Dep
         )
     
     if not password_valid:
+        # Registrar intento fallido
+        log_failed_login(db, request, email, user_id=user.id, reason="Contraseña incorrecta")
+        
+        # Verificar nuevamente si se alcanzó el límite con este intento
+        if user.failed_login_attempts >= 5:
+            remaining_time = 30  # minutos
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Cuenta bloqueada temporalmente por múltiples intentos fallidos. Intenta nuevamente en {remaining_time} minutos."
+            )
+        
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Credenciales inválidas."
         )
+    
+    # Login exitoso - resetear intentos fallidos
+    reset_failed_login_attempts(db, user)
+    
+    # Registrar login exitoso
+    log_successful_login(db, request, user)
     
     # Verificar estado de autorización
     # Los admins siempre pueden iniciar sesión

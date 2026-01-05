@@ -302,3 +302,34 @@ class UserAuthStatusResponse(BaseModel):
     authorized_by_name: Optional[str] = None
     unauthorized_by_name: Optional[str] = None
     message: str
+# Security Logs
+class SecurityLogResponse(BaseModel):
+    id: int
+    event_type: str
+    user_id: Optional[int] = None
+    user_email: Optional[str] = None
+    user_name: Optional[str] = None
+    performed_by_id: Optional[int] = None
+    performed_by_email: Optional[str] = None
+    performed_by_name: Optional[str] = None
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    description: str
+    event_metadata: Optional[str] = None
+    severity: str
+    timestamp: datetime
+
+class SecurityLogsListResponse(BaseModel):
+    logs: List[SecurityLogResponse]
+    total: int
+    limit: int
+    offset: int
+
+class UserWithFailedLoginsResponse(BaseModel):
+    user_id: int
+    email: str
+    nombre_completo: str
+    failed_attempts: int
+    last_failed_login: Optional[str] = None
+    account_locked: bool
+    locked_until: Optional[str] = None
