@@ -998,3 +998,333 @@ VALUES ((SELECT id FROM public.users pu WHERE pu.email = 'josepabloha@live.com.m
         'EXIT',
         TO_TIMESTAMP('2025-11-28 20:00', 'YYYY-MM-DD HH24:MI'),
         FALSE);
+
+-- Enable tablefunc extension for crosstab function
+CREATE EXTENSION IF NOT EXISTS tablefunc;
+
+-- ============================================================================
+-- Materialized View: mv_user_daily_hours
+-- ============================================================================
+-- Summarizes the amount of hours worked by a user by day, based on ENTRY/EXIT
+-- pairs from the access_logs table.
+--
+-- Logic:
+-- - Pairs ENTRY/EXIT records for each user
+-- - Calculates hours between ENTRY and EXIT
+-- - If a record is missing its pair (two consecutive ENTRY or EXIT),
+--   assumes 2 hours for that time slot
+-- - Handles pairs that span multiple days (overnight work)
+-- - Aggregates total hours by user_id and day_bucket (DATE)
+-- ============================================================================
+
+DROP MATERIALIZED VIEW IF EXISTS public.mv_user_daily_hours CASCADE;
+
+CREATE MATERIALIZED VIEW public.mv_user_daily_hours AS
+WITH ordered_logs AS (
+    -- Order all access logs by user and timestamp
+    SELECT
+        user_id,
+        timestamp,
+        access_type,
+        DATE(timestamp)::DATE AS day_bucket,
+        LAG(access_type) OVER (PARTITION BY user_id ORDER BY timestamp) AS prev_access_type,
+        LEAD(access_type) OVER (PARTITION BY user_id ORDER BY timestamp) AS next_access_type,
+        LAG(timestamp) OVER (PARTITION BY user_id ORDER BY timestamp) AS prev_timestamp,
+        LEAD(timestamp) OVER (PARTITION BY user_id ORDER BY timestamp) AS next_timestamp
+    FROM public.access_logs
+),
+session_hours AS (
+    -- Calculate hours for each session (ENTRY record)
+    SELECT
+        user_id,
+        timestamp AS entry_timestamp,
+        DATE(timestamp)::DATE AS entry_day,
+        next_timestamp AS exit_timestamp,
+        DATE(next_timestamp)::DATE AS exit_day,
+        CASE
+            -- ENTRY followed by EXIT: calculate actual hours
+            WHEN access_type = 'ENTRY' AND next_access_type = 'EXIT' THEN
+                EXTRACT(EPOCH FROM (next_timestamp - timestamp)) / 3600.0
+
+            -- Missing pair: ENTRY followed by ENTRY or ENTRY at end
+            -- Assume 2 hours for the unmatched ENTRY
+            WHEN access_type = 'ENTRY' AND (next_access_type = 'ENTRY' OR next_access_type IS NULL) THEN
+                2.0
+
+            ELSE NULL
+        END AS total_hours
+    FROM ordered_logs
+    WHERE access_type = 'ENTRY'
+
+    UNION ALL
+
+    -- Handle unmatched EXIT records (EXIT without previous ENTRY)
+    SELECT
+        user_id,
+        timestamp AS entry_timestamp,
+        DATE(timestamp)::DATE AS entry_day,
+        NULL::TIMESTAMP AS exit_timestamp,
+        NULL::DATE AS exit_day,
+        2.0 AS total_hours
+    FROM ordered_logs
+    WHERE access_type = 'EXIT'
+      AND (prev_access_type IS NULL OR prev_access_type = 'EXIT')
+),
+split_sessions AS (
+    -- Split overnight sessions across both days
+    SELECT
+        user_id,
+        entry_day::DATE AS day_bucket,
+        CASE
+            WHEN entry_day::DATE = exit_day::DATE OR exit_day IS NULL THEN
+                -- Same day or no exit: all hours go to entry day
+                total_hours
+            ELSE
+                -- Overnight session: hours until midnight
+                EXTRACT(EPOCH FROM (
+                    DATE_TRUNC('day', entry_timestamp) + INTERVAL '1 day' - entry_timestamp
+                )) / 3600.0
+        END AS hours
+    FROM session_hours
+
+    UNION ALL
+
+    -- Add exit day hours for overnight sessions
+    SELECT
+        user_id,
+        exit_day::DATE AS day_bucket,
+        -- Hours from midnight to exit
+        EXTRACT(EPOCH FROM (
+            exit_timestamp - DATE_TRUNC('day', exit_timestamp)
+        )) / 3600.0 AS hours
+    FROM session_hours
+    WHERE exit_day IS NOT NULL
+      AND entry_day::DATE != exit_day::DATE
+)
+SELECT
+    user_id,
+    day_bucket::DATE AS day_bucket,
+    SUM(hours) AS total_hours
+FROM split_sessions
+GROUP BY user_id, day_bucket::DATE
+ORDER BY user_id, day_bucket::DATE;
+
+-- Create index for better query performance
+CREATE INDEX idx_mv_user_daily_hours_user_day
+ON public.mv_user_daily_hours(user_id, day_bucket);
+
+-- Refresh the materialized view to populate it with data
+REFRESH MATERIALIZED VIEW public.mv_user_daily_hours;
+
+-- ============================================================================
+-- Helper function: build_period_columns
+-- ============================================================================
+-- Generates a comma-separated list of column definitions for crosstab
+-- based on the date range and grouping unit (day, week, month, quarter, year)
+-- ============================================================================
+DROP FUNCTION IF EXISTS public.build_period_columns(DATE, DATE, TEXT) CASCADE;
+CREATE OR REPLACE FUNCTION public.build_period_columns(
+    p_date_start DATE,
+    p_date_end   DATE,
+    p_group_unit TEXT DEFAULT 'day'   -- day|week|month|quarter|year
+) RETURNS TEXT
+LANGUAGE plpgsql
+AS $func$
+DECLARE
+    v_cols        TEXT := '';
+    v_period      DATE;
+    v_period_end  DATE;
+    v_label       TEXT;
+    v_interval    INTERVAL;
+BEGIN
+    -- Determine the interval based on grouping unit
+    CASE p_group_unit
+        WHEN 'day'     THEN v_interval := INTERVAL '1 day';
+        WHEN 'week'    THEN v_interval := INTERVAL '1 week';
+        WHEN 'month'   THEN v_interval := INTERVAL '1 month';
+        WHEN 'quarter' THEN v_interval := INTERVAL '3 months';
+        WHEN 'year'    THEN v_interval := INTERVAL '1 year';
+        ELSE v_interval := INTERVAL '1 day';
+    END CASE;
+
+    -- Generate column definitions for each period in the range
+    v_period := p_date_start;
+    WHILE v_period <= p_date_end LOOP
+        -- Generate the period label based on grouping unit
+        CASE p_group_unit
+            WHEN 'day' THEN
+                v_label := to_char(v_period, 'YYYY_MM_DD');
+            WHEN 'week' THEN
+                v_label := to_char(v_period, 'IYYY_IW');
+            WHEN 'month' THEN
+                v_label := to_char(v_period, 'YYYY_MM');
+            WHEN 'quarter' THEN
+                v_label := to_char(v_period, 'YYYY') || '_q' ||
+                          ((EXTRACT(MONTH FROM v_period)::INT - 1) / 3 + 1)::TEXT;
+            WHEN 'year' THEN
+                v_label := to_char(v_period, 'YYYY');
+            ELSE
+                v_label := to_char(v_period, 'YYYY_MM_DD');
+        END CASE;
+
+        -- Add column definition (escape column name if it starts with a number)
+        IF v_cols != '' THEN
+            v_cols := v_cols || ', ';
+        END IF;
+        v_cols := v_cols || format('"%s" NUMERIC', v_label);
+
+        -- Move to next period
+        v_period := v_period + v_interval;
+    END LOOP;
+
+    RETURN v_cols;
+END;
+$func$;
+
+-- ============================================================================
+-- Main function: fn_user_hours_report
+-- ============================================================================
+-- Creates or replaces a view (v_user_hours_report) that pivots user hours
+-- data from mv_user_daily_hours using crosstab, with configurable date
+-- range, grouping unit, and optional user filter.
+-- ============================================================================
+DROP FUNCTION IF EXISTS public.fn_user_hours_report(DATE, DATE, TEXT, INTEGER) CASCADE;
+CREATE OR REPLACE FUNCTION public.fn_user_hours_report(
+    p_date_start DATE DEFAULT NULL,
+    p_date_end   DATE DEFAULT NULL,
+    p_group_unit TEXT   DEFAULT 'day',   -- day|week|month|quarter|year
+    p_user_id    INTEGER DEFAULT NULL
+) RETURNS VOID
+LANGUAGE plpgsql
+AS $func$
+DECLARE
+    v_start              DATE;
+    v_end                DATE;
+    v_cols               TEXT;          -- column list for crosstab
+    v_user_filter        TEXT;
+    v_period_expr        TEXT;          -- period label expression for data query
+    v_period_expr_cols   TEXT;          -- period label expression for column-list query
+    v_interval_str       TEXT;          -- interval string for generate_series
+    v_sql                TEXT;          -- CREATE OR REPLACE VIEW statement
+BEGIN
+    --------------------------------------------------------------------
+    -- 1️⃣ Resolve date range (full range if not supplied)
+    --------------------------------------------------------------------
+    SELECT COALESCE(p_date_start, MIN(timestamp)::date),
+           COALESCE(p_date_end,   MAX(timestamp)::date)
+      INTO v_start, v_end
+      FROM public.access_logs;          -- raw logs give the limits
+
+    --------------------------------------------------------------------
+    -- 2️⃣ Build the dynamic column list
+    --------------------------------------------------------------------
+    v_cols := public.build_period_columns(v_start, v_end, p_group_unit);
+
+    --------------------------------------------------------------------
+    -- 3️⃣ Optional user filter
+    --------------------------------------------------------------------
+    IF p_user_id IS NOT NULL THEN
+        v_user_filter := format('AND user_id = %s', p_user_id);
+    ELSE
+        v_user_filter := '';
+    END IF;
+
+    --------------------------------------------------------------------
+    -- 4️⃣ Build period label expressions and format strings
+    -- NOTE: mv_user_daily_hours has a DATE column named 'day_bucket'
+    --------------------------------------------------------------------
+    CASE p_group_unit
+        WHEN 'day' THEN
+            v_period_expr := 'to_char(day_bucket, ''YYYY_MM_DD'')';
+            v_period_expr_cols := 'to_char(g.d, ''YYYY_MM_DD'')';
+            v_interval_str := 'interval ''1 day''';
+        WHEN 'week' THEN
+            v_period_expr := 'to_char(day_bucket, ''IYYY_IW'')';
+            v_period_expr_cols := 'to_char(g.d, ''IYYY_IW'')';
+            v_interval_str := 'interval ''1 week''';
+        WHEN 'month' THEN
+            v_period_expr := 'to_char(day_bucket, ''YYYY_MM'')';
+            v_period_expr_cols := 'to_char(g.d, ''YYYY_MM'')';
+            v_interval_str := 'interval ''1 month''';
+        WHEN 'quarter' THEN
+            v_period_expr := 'to_char(day_bucket, ''YYYY'')||''_q''||((extract(month from day_bucket)::int-1)/3+1)::text';
+            v_period_expr_cols := 'to_char(g.d, ''YYYY'')||''_q''||((extract(month from g.d)::int-1)/3+1)::text';
+            v_interval_str := 'interval ''3 month''';
+        WHEN 'year' THEN
+            v_period_expr := 'to_char(day_bucket, ''YYYY'')';
+            v_period_expr_cols := 'to_char(g.d, ''YYYY'')';
+            v_interval_str := 'interval ''1 year''';
+        ELSE
+            v_period_expr := 'to_char(day_bucket, ''YYYY_MM_DD'')';
+            v_period_expr_cols := 'to_char(g.d, ''YYYY_MM_DD'')';
+            v_interval_str := 'interval ''1 day''';
+    END CASE;
+
+    --------------------------------------------------------------------
+    -- 5️⃣ (Re)create the view that contains the pivot
+    --------------------------------------------------------------------
+    -- Use format() for most of the SQL, but build the period expressions
+    -- by directly inserting them (format %s should work, but being explicit)
+    v_sql := format($view$
+        DROP VIEW IF EXISTS public.v_user_hours_report CASCADE;
+        CREATE OR REPLACE VIEW public.v_user_hours_report AS
+        SELECT *
+        FROM crosstab(
+            $inner$
+                /* ---- data query ------------------------------------------------ */
+                SELECT
+                    user_id,
+                    period_label,
+                    SUM(total_hours) AS total_hours
+                FROM (
+                    SELECT
+                        user_id,
+                        %s AS period_label,          -- derived from the chosen grouping
+                        total_hours
+                    FROM public.mv_user_daily_hours
+                    /* Filter by the requested date range */
+                    WHERE day_bucket BETWEEN
+                          %L::date AND
+                          %L::date
+                      %s
+                ) AS grouped_data
+                GROUP BY user_id, period_label
+                ORDER BY 1,2
+            $inner$,
+            $inner$
+                /* ---- column‑list query (full list of periods) ------------------- */
+                SELECT %s AS period_label
+                FROM generate_series(%L::date, %L::date, %s) AS g(d)
+                ORDER BY 1
+            $inner$
+        ) AS ct (user_id INTEGER, %s);
+    $view$,
+        v_period_expr,                    -- SQL expression: format() %s inserts as-is (no quotes)
+        v_start,                          -- Start date, quoted with %L
+        v_end,                            -- End date, quoted with %L
+        v_user_filter,                    -- SQL fragment, inserted as-is with %s
+        v_period_expr_cols,               -- SQL expression: format() %s inserts as-is (no quotes)
+        v_start, v_end, v_interval_str,   -- Dates quoted with %L, interval as-is with %s
+        v_cols                            -- Column list, inserted as-is with %s
+    );
+
+    -- Optional: Uncomment the line below to see the generated SQL for debugging
+    -- RAISE NOTICE 'Generated SQL: %', v_sql;
+
+    EXECUTE v_sql;          -- (re)creates the view
+END;
+$func$;
+
+
+SELECT * FROM public.fn_user_hours_report();
+SELECT * FROM public.v_user_hours_report;
+SELECT * FROM public.fn_user_hours_report( TO_DATE('2025-11-03', 'YYYY-MM-DD'), TO_DATE('2025-11-04', 'YYYY-MM-DD'));
+SELECT * FROM public.v_user_hours_report;
+SELECT * FROM public.fn_user_hours_report(TO_DATE('2025-11-01', 'YYYY-MM-DD'), TO_DATE('2025-11-30', 'YYYY-MM-DD'), 'week');
+SELECT * FROM public.v_user_hours_report;
+SELECT * FROM public.fn_user_hours_report(TO_DATE('2025-11-01', 'YYYY-MM-DD'), TO_DATE('2025-11-30', 'YYYY-MM-DD'), 'month');
+SELECT * FROM public.v_user_hours_report;
+SELECT * FROM public.fn_user_hours_report(TO_DATE('2025-01-01', 'YYYY-MM-DD'), TO_DATE('2025-12-31', 'YYYY-MM-DD'), 'year');
+SELECT * FROM public.v_user_hours_report;
+SELECT * FROM public.fn_user_hours_report(TO_DATE('2025-11-01', 'YYYY-MM-DD'), TO_DATE('2025-11-30', 'YYYY-MM-DD'), 'week', 1);
+SELECT * FROM public.v_user_hours_report;
