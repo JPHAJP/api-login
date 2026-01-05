@@ -2,7 +2,7 @@ import os
 from datetime import datetime, timedelta
 from typing import Optional, List
 
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, status, Request
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -15,11 +15,14 @@ from schemas import (
 )
 from utils.auth import get_admin_user
 from utils.qr import get_or_create_current_qr
+from utils.rate_limit import limiter
 
 router = APIRouter(prefix="/admin", tags=["Administración"])
 
 @router.get('/users/pending')
+@limiter.limit("50/minute")
 async def get_pending_users(
+    request: Request,
     page: int = 1,
     per_page: int = 20,
     role_filter: Optional[str] = None,

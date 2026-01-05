@@ -2,20 +2,35 @@ from datetime import datetime
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, EmailStr, field_validator, Field
 import re
+from utils.password_validator import PasswordValidator
+from utils.input_sanitizer import sanitize_name, sanitize_address
 
 class UserLogin(BaseModel):
     email: EmailStr
-    password: str = Field(..., min_length=6)
+    password: str = Field(..., min_length=8, max_length=128)
 
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str = Field(..., min_length=6)
+    password: str = Field(..., min_length=8, max_length=128)
     nombre_completo: str = Field(..., min_length=1, max_length=100)
     apellidos: str = Field(..., min_length=1, max_length=100)
     direccion: str = Field(..., min_length=1, max_length=255)
     edad: int = Field(..., ge=18, le=120)
     telefono: str = Field(..., min_length=10, max_length=20)
     role: str = Field(..., pattern="^(voluntarios|personal|servicio_social|visitas|familiares|donantes|proveedores)$")
+    
+    @field_validator('password')
+    @classmethod
+    def validate_password_strength(cls, v):
+        """Valida que la contraseña cumpla con los requisitos de seguridad"""
+        result = PasswordValidator.validate(v)
+        if not result.is_valid:
+            # Crear un mensaje detallado con todos los errores
+            error_msg = "La contraseña no cumple con los requisitos de seguridad:\n" + "\n".join(f"• {error}" for error in result.errors)
+            if result.suggestions:
+                error_msg += "\n\nSugerencias:\n" + "\n".join(f"• {sug}" for sug in result.suggestions)
+            raise ValueError(error_msg)
+        return v
     
     @field_validator('telefono')
     @classmethod
@@ -25,12 +40,47 @@ class UserCreate(BaseModel):
             raise ValueError('Formato de teléfono inválido (debe tener 10-15 dígitos)')
         return v
     
-    @field_validator('nombre_completo', 'apellidos', 'direccion')
+    @field_validator('nombre_completo', 'apellidos')
     @classmethod
-    def validate_strings(cls, v):
-        if not v.strip():
+    def validate_and_sanitize_names(cls, v):
+        """Valida y sanitiza nombres y apellidos"""
+        if not v or not v.strip():
             raise ValueError('El campo no puede estar vacío')
-        return v.strip()
+        
+        # Sanitizar el nombre
+        sanitized = sanitize_name(v)
+        
+        if not sanitized:
+            raise ValueError('El nombre contiene caracteres no permitidos')
+        
+        if len(sanitized) < 2:
+            raise ValueError('El nombre debe tener al menos 2 caracteres válidos')
+        
+        if len(sanitized) > 100:
+            raise ValueError('El nombre es demasiado largo (máximo 100 caracteres)')
+        
+        return sanitized
+    
+    @field_validator('direccion')
+    @classmethod
+    def validate_and_sanitize_address(cls, v):
+        """Valida y sanitiza direcciones"""
+        if not v or not v.strip():
+            raise ValueError('La dirección no puede estar vacía')
+        
+        # Sanitizar la dirección
+        sanitized = sanitize_address(v)
+        
+        if not sanitized:
+            raise ValueError('La dirección contiene caracteres no permitidos')
+        
+        if len(sanitized) < 5:
+            raise ValueError('La dirección debe tener al menos 5 caracteres válidos')
+        
+        if len(sanitized) > 255:
+            raise ValueError('La dirección es demasiado larga (máximo 255 caracteres)')
+        
+        return sanitized
 
 class UserResponse(BaseModel):
     id: int

@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, Request, Depends, HTTPException, status
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi.errors import RateLimitExceeded
 from dotenv import load_dotenv
 
 # Cargar variables de entorno ANTES de importar database
@@ -16,6 +17,8 @@ from routes.auth import router as auth_router
 from routes.user import router as user_router
 from routes.admin import router as admin_router
 from utils.qr import get_or_create_current_qr, create_qr_image
+from utils.rate_limit import limiter, rate_limit_exceeded_handler
+from utils.security_headers import get_security_headers_middleware
 from schemas import QRCodeGenerate
 from sqlalchemy.orm import Session
 
@@ -45,6 +48,10 @@ app = FastAPI(
         }
     ]
 )
+
+# Configurar Rate Limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # Configuración CORS
 allowed_origins = [
@@ -106,6 +113,9 @@ def is_origin_allowed(origin: str) -> bool:
     
     return False
 
+# Agregar middleware de security headers (PRIMERO, antes de CORS)
+app.add_middleware(get_security_headers_middleware())
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
@@ -155,7 +165,8 @@ async def cors_handler(request: Request, call_next):
     description="Endpoint para verificar que el servidor está funcionando correctamente",
     response_description="Estado del servidor y timestamp actual"
 )
-async def health():
+@limiter.limit("200/minute")
+async def health(request: Request):
     return {
         "status": "ok",
         "time": datetime.now().isoformat(),
@@ -172,6 +183,8 @@ async def health():
     
     **No requiere autenticación.**
     
+    **Rate Limit:** 60 solicitudes por minuto en producción, 200 en desarrollo.
+    
     Este endpoint puede ser usado por cualquier dispositivo (tablets, móviles, pantallas) 
     que necesite mostrar el código QR para control de acceso.
     
@@ -186,7 +199,8 @@ async def health():
     """,
     response_description="Código QR actual con imagen en base64 y datos de expiración"
 )
-async def get_public_qr(db: Session = Depends(get_db)):
+@limiter.limit("200/minute")
+async def get_public_qr(request: Request, db: Session = Depends(get_db)):
     """Obtiene el código QR actual válido - Acceso público"""
     try:
         current_qr = get_or_create_current_qr(db)

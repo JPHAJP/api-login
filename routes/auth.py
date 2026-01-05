@@ -4,7 +4,7 @@ from email_validator import validate_email, EmailNotValidError
 from werkzeug.utils import secure_filename
 import os
 
-from fastapi import APIRouter, HTTPException, Depends, File, UploadFile, Form, status
+from fastapi import APIRouter, HTTPException, Depends, File, UploadFile, Form, status, Request
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -15,6 +15,8 @@ from utils.auth import (
     get_refresh_token_user, _normalize_email, validate_phone, 
     allowed_file
 )
+from utils.password_validator import PasswordValidator
+from utils.rate_limit import limiter
 from config import (
     ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS, 
     UPLOAD_FOLDER, ALLOWED_EXTENSIONS
@@ -23,7 +25,9 @@ from config import (
 router = APIRouter(prefix="/auth", tags=["Autenticación"])
 
 @router.post('/register', response_model=Dict[str, Any])
+@limiter.limit("20/minute")
 async def register(
+    request: Request,
     email: str = Form(...),
     password: str = Form(...),
     nombre_completo: str = Form(...),
@@ -58,10 +62,15 @@ async def register(
         )
     
     # Validar contraseña
-    if len(password) < 6:
+    password_validation = PasswordValidator.validate(password)
+    if not password_validation.is_valid:
+        # Crear mensaje detallado con todos los errores
+        error_msg = "La contraseña no cumple con los requisitos de seguridad:\n" + "\n".join(f"• {error}" for error in password_validation.errors)
+        if password_validation.suggestions:
+            error_msg += "\n\nSugerencias:\n" + "\n".join(f"• {sug}" for sug in password_validation.suggestions)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="La contraseña debe tener al menos 6 caracteres."
+            detail=error_msg
         )
     
     # Validar edad
@@ -165,7 +174,8 @@ async def register(
         )
 
 @router.post("/login", response_model=Token)
-async def login(user_credentials: UserLogin, db: Session = Depends(get_db)):
+@limiter.limit("20/minute")
+async def login(request: Request, user_credentials: UserLogin, db: Session = Depends(get_db)):
     try:
         email = _normalize_email(user_credentials.email)
     except ValueError as ve:
@@ -280,7 +290,8 @@ async def get_auth_status(current_user: User = Depends(get_current_user), db: Se
     )
 
 @router.post("/refresh", response_model=Dict[str, str])
-async def refresh_token(user: User = Depends(get_refresh_token_user)):
+@limiter.limit("20/minute")
+async def refresh_token(request: Request, user: User = Depends(get_refresh_token_user)):
     # Verificar que el usuario siga autorizado (excepto admins)
     if user.role != 'admin' and user.authorization_status != "authorized":
         raise HTTPException(
