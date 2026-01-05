@@ -262,6 +262,24 @@ class UserAuthorizationResponse(BaseModel):
     action_by: str
     reason: Optional[str] = None
 
+# Admin change password
+class AdminChangePasswordRequest(BaseModel):
+    new_password: str = Field(..., min_length=6, max_length=100)
+    
+    @field_validator('new_password')
+    @classmethod
+    def validate_password(cls, v):
+        if len(v) < 6:
+            raise ValueError('La contraseña debe tener al menos 6 caracteres')
+        return v
+
+class AdminChangePasswordResponse(BaseModel):
+    message: str
+    user_id: int
+    user_email: str
+    changed_by: str
+    changed_at: datetime
+
 # User deletion check
 class UserDeletionCheckResponse(BaseModel):
     can_delete: bool

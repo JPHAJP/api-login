@@ -101,9 +101,9 @@ def main():
                     return True
                 return False
         
-        password = getpass("Contraseña (min 6 chars): ")
-        if len(password) < 6:
-            print("❌ Mínimo 6 caracteres")
+        password = getpass("Contraseña (min 8 chars): ")
+        if len(password) < 8:
+            print("❌ Mínimo 8 caracteres")
             return False
         
         confirm = getpass("Confirmar contraseña: ")

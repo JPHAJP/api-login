@@ -17,6 +17,7 @@ from utils.auth import (
 )
 from utils.password_validator import PasswordValidator
 from utils.rate_limit import limiter
+from utils.file_encryption import encrypt_file_content
 from config import (
     ACCESS_TOKEN_EXPIRE_MINUTES, REFRESH_TOKEN_EXPIRE_DAYS, 
     UPLOAD_FOLDER, ALLOWED_EXTENSIONS
@@ -112,9 +113,15 @@ async def register(
     file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
     
     try:
+        # Leer el contenido del archivo
         content = await foto_identificacion.read()
+        
+        # Encriptar el contenido antes de guardarlo
+        encrypted_content = encrypt_file_content(content)
+        
+        # Guardar el archivo encriptado
         with open(file_path, "wb") as f:
-            f.write(content)
+            f.write(encrypted_content)
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

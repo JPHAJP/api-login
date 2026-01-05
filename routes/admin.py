@@ -1,4 +1,5 @@
 import os
+import tempfile
 from datetime import datetime, timedelta
 from typing import Optional, List
 
@@ -11,11 +12,14 @@ from models import User, AccessLog, AccessType
 from schemas import (
     AdminStats, UserDetailedResponse, UserSearchResponse, UserCurrentlyInside,
     ManualExitRequest, AccessLogStats, AccessLogResponse, UserAuthorizationResponse,
-    UserDeletionCheckResponse, UnauthorizeUserRequest
+    UserDeletionCheckResponse, UnauthorizeUserRequest, AdminChangePasswordRequest,
+    AdminChangePasswordResponse
 )
 from utils.auth import get_admin_user
 from utils.qr import get_or_create_current_qr
 from utils.rate_limit import limiter
+from utils.file_encryption import decrypt_file_content
+from utils.password_validator import PasswordValidator
 
 router = APIRouter(prefix="/admin", tags=["Administración"])
 
@@ -362,6 +366,72 @@ async def reauthorize_user(
         reason=None
     )
 
+@router.post('/users/{user_id}/change-password', response_model=AdminChangePasswordResponse)
+@limiter.limit("10/minute")
+async def admin_change_user_password(
+    request: Request,
+    user_id: int,
+    password_request: AdminChangePasswordRequest,
+    admin_user: User = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Permite a un administrador cambiar la contraseña de cualquier usuario que no sea admin.
+    
+    Restricciones:
+    - Solo usuarios con rol 'admin' pueden usar este endpoint
+    - No se puede cambiar la contraseña de otro administrador
+    - La nueva contraseña debe cumplir con los requisitos de seguridad
+    """
+    # Buscar el usuario objetivo
+    target_user = db.query(User).filter(User.id == user_id).first()
+    if not target_user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Usuario no encontrado."
+        )
+    
+    # Verificar que el usuario objetivo no sea un administrador
+    if target_user.role == 'admin':
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No se puede cambiar la contraseña de otro administrador."
+        )
+    
+    # Validar la nueva contraseña con el validador de seguridad
+    password_validation = PasswordValidator.validate(password_request.new_password)
+    if not password_validation.is_valid:
+        # Crear mensaje detallado con todos los errores
+        error_msg = "La nueva contraseña no cumple con los requisitos de seguridad:\n" + "\n".join(f"• {error}" for error in password_validation.errors)
+        if password_validation.suggestions:
+            error_msg += "\n\nSugerencias:\n" + "\n".join(f"• {sug}" for sug in password_validation.suggestions)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_msg
+        )
+    
+    # Cambiar la contraseña
+    try:
+        target_user.set_password(password_request.new_password)
+        db.commit()
+        db.refresh(target_user)
+        
+        # Retornar respuesta exitosa
+        return AdminChangePasswordResponse(
+            message=f"Contraseña actualizada exitosamente para el usuario {target_user.nombre_completo} {target_user.apellidos}",
+            user_id=target_user.id,
+            user_email=target_user.email,
+            changed_by=f"{admin_user.nombre_completo} {admin_user.apellidos}",
+            changed_at=datetime.now()
+        )
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al actualizar la contraseña."
+        )
+
 @router.get('/users/{user_id}/identification')
 async def get_user_identification(
     user_id: int,
@@ -382,10 +452,24 @@ async def get_user_identification(
         )
     
     try:
+        # Leer el archivo encriptado
+        with open(user.foto_identificacion_path, 'rb') as encrypted_file:
+            encrypted_data = encrypted_file.read()
+        
+        # Desencriptar el contenido
+        decrypted_data = decrypt_file_content(encrypted_data)
+        
+        # Crear un archivo temporal con los datos desencriptados
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_file:
+            temp_file.write(decrypted_data)
+            temp_path = temp_file.name
+        
+        # Devolver el archivo temporal
         return FileResponse(
-            user.foto_identificacion_path,
+            temp_path,
             media_type='application/octet-stream',
-            filename=f"identificacion_usuario_{user_id}.jpg"
+            filename=f"identificacion_usuario_{user_id}.jpg",
+            background=None  # El archivo temporal se eliminará después de enviarlo
         )
     except Exception as e:
         raise HTTPException(
@@ -736,6 +820,13 @@ async def get_user_identification_file(
         )
     
     try:
+        # Leer el archivo encriptado
+        with open(user.foto_identificacion_path, 'rb') as encrypted_file:
+            encrypted_data = encrypted_file.read()
+        
+        # Desencriptar el contenido
+        decrypted_data = decrypt_file_content(encrypted_data)
+        
         # Determinar el tipo MIME basado en la extensión
         file_extension = user.foto_identificacion_path.lower().split('.')[-1]
         media_type_map = {
@@ -747,10 +838,17 @@ async def get_user_identification_file(
         }
         media_type = media_type_map.get(file_extension, 'image/jpeg')
         
+        # Crear un archivo temporal con los datos desencriptados
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f'.{file_extension}') as temp_file:
+            temp_file.write(decrypted_data)
+            temp_path = temp_file.name
+        
+        # Devolver el archivo temporal
         return FileResponse(
-            user.foto_identificacion_path,
+            temp_path,
             media_type=media_type,
-            filename=f"identificacion_usuario_{user_id}_{user.nombre_completo.replace(' ', '_')}.{file_extension}"
+            filename=f"identificacion_usuario_{user_id}_{user.nombre_completo.replace(' ', '_')}.{file_extension}",
+            background=None  # El archivo temporal se eliminará después de enviarlo
         )
     except Exception as e:
         raise HTTPException(
