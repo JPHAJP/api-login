@@ -1519,22 +1519,27 @@ BEGIN
                 /* ---- data query ------------------------------------------------ */
                 SELECT
                     user_id,
+                    user_name,
+                    user_email,
                     period_label,
                     SUM(total_hours) AS total_hours
                 FROM (
                     SELECT
-                        user_id,
+                        m.user_id,
+                        COALESCE(u.nombre_completo, '') || ' ' || COALESCE(u.apellidos, '') AS user_name,
+                        u.email AS user_email,
                         %s AS period_label,          -- derived from the chosen grouping
-                        total_hours
-                    FROM public.mv_user_daily_hours
+                        m.total_hours
+                    FROM public.mv_user_daily_hours m
+                    LEFT JOIN public.users u ON m.user_id = u.id
                     /* Filter by the requested date range */
-                    WHERE day_bucket BETWEEN
+                    WHERE m.day_bucket BETWEEN
                           %L::date AND
                           %L::date
                       %s
                 ) AS grouped_data
-                GROUP BY user_id, period_label
-                ORDER BY 1,2
+                GROUP BY user_id, user_name, user_email, period_label
+                ORDER BY 1,2,3,4
             $inner$,
             $inner$
                 /* ---- column‑list query (full list of periods) ------------------- */
@@ -1542,7 +1547,7 @@ BEGIN
                 FROM generate_series(%L::date, %L::date, %s) AS g(d)
                 ORDER BY 1
             $inner$
-        ) AS ct (user_id INTEGER, %s);
+        ) AS ct (user_id INTEGER, user_name TEXT, user_email TEXT, %s);
     $view$,
         v_period_expr,                    -- SQL expression: format() %s inserts as-is (no quotes)
         v_start,                          -- Start date, quoted with %L
