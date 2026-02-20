@@ -1,3 +1,8 @@
+from dotenv import load_dotenv
+
+# Cargar variables de entorno ANTES de importar otros módulos que las usen
+load_dotenv()
+
 import ipaddress
 from datetime import datetime
 from urllib.parse import urlparse
@@ -5,15 +10,14 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
 
 from database import engine
 from models import Base
 from routes.auth import router as auth_router
 from routes.user import router as user_router
-from routes.admin import router as admin_router
 
-load_dotenv()
+from routes.admin import router as admin_router
+from routes.public import router as public_router
 
 # Crear las tablas
 Base.metadata.create_all(bind=engine)
@@ -71,35 +75,35 @@ def is_origin_allowed(origin: str) -> bool:
         if not host:
             return False
         
+        # 1. Verificar si el host está en la lista de orígenes permitidos directamente
+        if origin in allowed_origins:
+            return True
+        
+        # 2. Intentar parsear el host como una IP y verificar contra CIDRs
         try:
-            ip = ipaddress.ip_address(host)
-            for cidr in allowed_cidrs:
-                if ip in ipaddress.ip_network(cidr):
+            ip_obj = ipaddress.ip_address(host)
+            for cidr_str in allowed_cidrs:
+                network = ipaddress.ip_network(cidr_str)
+                if ip_obj in network:
                     return True
         except ValueError:
+            # No es una dirección IP, o no está en los CIDRs
             pass
             
+        return False
     except Exception:
-        pass
-    
-    return False
+        return False
 
+# Configuración de CORS para permitir acceso externo
+# Configuración de CORS para permitir acceso externo
+# IMPORTANTE: allow_origins=["*"] NO funciona con allow_credentials=True
+# Usamos allow_origin_regex para permitir cualquier IP local
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3})(:\d+)?",
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=[
-        "Accept",
-        "Accept-Language", 
-        "Content-Language",
-        "Content-Type",
-        "Authorization",
-        "X-Requested-With",
-        "Origin",
-        "Cache-Control",
-        "Pragma"
-    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Middleware adicional para CORS con CIDR (redes IP específicas)
@@ -129,6 +133,7 @@ async def cors_handler(request: Request, call_next):
 app.include_router(auth_router)
 app.include_router(user_router)
 app.include_router(admin_router)
+app.include_router(public_router)
 
 # Endpoints públicos
 @app.get('/health')

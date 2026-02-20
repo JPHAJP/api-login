@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, Text, Enum
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -117,7 +117,8 @@ class QRCode(Base):
     access_logs = relationship('AccessLog', back_populates='qr_code')
     
     def is_expired(self):
-        return datetime.now() > self.expires_at
+        # Comparar con UTC naive
+        return datetime.now(timezone.utc).replace(tzinfo=None) > self.expires_at
     
     def to_dict(self):
         return {

@@ -8,6 +8,7 @@ from schemas import (
 )
 from utils.auth import get_current_user, get_admin_user
 from utils.qr import get_or_create_current_qr, create_qr_image
+from utils.websocket import manager
 from datetime import datetime
 
 router = APIRouter(tags=["Usuario"])
@@ -85,6 +86,7 @@ async def scan_qr_code(
         )
     
     if qr_code.is_expired():
+        await manager.broadcast("SCAN_FAILURE") # Notificar fallo por expiración
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Código QR expirado"
@@ -122,6 +124,9 @@ async def scan_qr_code(
     db.add(access_log)
     db.commit()
     db.refresh(access_log)
+    
+    # Notificar registro exitoso al kiosko
+    await manager.broadcast("SCAN_SUCCESS")
     
     return {
         "message": f"{'Entrada' if scan_request.access_type == 'entry' else 'Salida'} registrada exitosamente",

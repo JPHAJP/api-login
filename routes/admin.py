@@ -15,6 +15,7 @@ from schemas import (
 )
 from utils.auth import get_admin_user
 from utils.qr import get_or_create_current_qr
+from utils.websocket import manager
 
 router = APIRouter(prefix="/admin", tags=["Administración"])
 
@@ -95,6 +96,11 @@ async def authorize_user(
     user.unauthorized_by_id = None
     
     db.commit()
+    
+
+    
+    # Notificar al Kiosko
+    await manager.broadcast("SCAN_SUCCESS")
     
     return {
         "message": "Usuario autorizado exitosamente.",

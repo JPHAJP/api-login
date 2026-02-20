@@ -1,11 +1,11 @@
+from datetime import datetime, timedelta, timezone
 import os
 import secrets
 import hashlib
 import base64
 import io
-from datetime import datetime, timedelta
-from sqlalchemy.orm import Session
 import qrcode
+from sqlalchemy.orm import Session
 from PIL import Image
 
 from models import QRCode
@@ -41,7 +41,9 @@ def create_qr_image(data: str) -> str:
 
 def cleanup_expired_qr_codes(db: Session):
     """Limpia códigos QR expirados de la base de datos"""
-    expired_codes = db.query(QRCode).filter(QRCode.expires_at < datetime.now()).all()
+    # Usar UTC naive para comparar con la BD
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    expired_codes = db.query(QRCode).filter(QRCode.expires_at < now_utc).all()
     for code in expired_codes:
         code.is_active = False
     db.commit()
@@ -51,10 +53,13 @@ def get_or_create_current_qr(db: Session) -> QRCode:
     # Limpiar códigos expirados
     cleanup_expired_qr_codes(db)
     
+    # Usar UTC naive
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    
     # Buscar QR activo y no expirado
     current_qr = db.query(QRCode).filter(
         QRCode.is_active == True,
-        QRCode.expires_at > datetime.now()
+        QRCode.expires_at > now_utc
     ).first()
     
     if current_qr:
@@ -62,7 +67,7 @@ def get_or_create_current_qr(db: Session) -> QRCode:
     
     # Crear nuevo QR code
     code = generate_qr_code_string()
-    expires_at = datetime.now() + timedelta(minutes=QR_EXPIRY_MINUTES)
+    expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=QR_EXPIRY_MINUTES)
     
     new_qr = QRCode(
         code=code,
